@@ -41,24 +41,26 @@ export async function updateProductAction(formData: FormData) {
 
     const price = formData.get("price") ? Number(formData.get("price")) : 0;
     const discountRate = formData.get("discountRate") ? Number(formData.get("discountRate")) : 0;
-    // 🌟 1. TANGKAP NILAI NOMINAL HARGA DISKON DI SINI DENGAN BENAR
     const discountedPrice = formData.get("discountedPrice") ? Number(formData.get("discountedPrice")) : null;
     const vatRate = formData.get("vatRate") ? Number(formData.get("vatRate")) : 0;
     const stock = formData.get("stock") ? Number(formData.get("stock")) : 1;
 
-    // Data Logistik & Pengiriman
     const weight = formData.get("weight") ? Number(formData.get("weight")) : 0;
     const length = formData.get("length") ? Number(formData.get("length")) : 0;
     const width = formData.get("width") ? Number(formData.get("width")) : 0;
     const height = formData.get("height") ? Number(formData.get("height")) : 0;
     const deliveryTime = formData.get("deliveryTime") as string || null;
 
-    // Parse data gambar & variasi kiriman frontend
     const existingImagesJson = formData.get("existingImages") as string;
     const existingImages: string[] = existingImagesJson ? JSON.parse(existingImagesJson) : [];
 
     const variationsJson = formData.get("variations") as string;
     const variations = variationsJson ? JSON.parse(variationsJson) : [];
+
+    // 🌟 TANGKAP DATA AFILIASI BARU DI BACKEND SERVER ACTION
+    const isAffiliate = formData.get("is_affiliate") === "true";
+    const rawRate = formData.get("affiliate_commission_rate");
+    const affiliateCommissionRate = isAffiliate && rawRate ? Number(rawRate) : null;
 
     // --- 1. PROSES IMAGE UPLOAD (.WEBP) ---
     const newImageFiles = formData.getAll("images") as File[];
@@ -93,7 +95,6 @@ export async function updateProductAction(formData: FormData) {
         sku: sku,
         price: price,
         discount_rate: discountRate,
-        // 🌟 2. MASUKKAN VARIABEL DENGAN BENAR (TYPO SUDAH DIBERSIHKAN)
         discounted_price: discountedPrice, 
         vat_rate: vatRate,
         stock: stock,
@@ -104,7 +105,6 @@ export async function updateProductAction(formData: FormData) {
         delivery_time: deliveryTime,
         image_urls: finalImageUrls,
         
-        // SINKRONKAN TANGKAPAN DENGAN KEY YANG DI-APPEND FRONTEND
         country: formData.get("country") as string || null,
         state: formData.get("state") as string || null,
         city: formData.get("cityId") as string || null,
@@ -112,6 +112,11 @@ export async function updateProductAction(formData: FormData) {
         zip_code: formData.get("zipCode") as string || null,
         
         variation_options: formData.get("variationOptions") ? JSON.parse(formData.get("variationOptions") as string) : [],
+        
+        // 🌟 UPDATE FIELD STRUKTUR PROGRAM AFILIASI KE DATABASE SUPABASE
+        is_affiliate: isAffiliate,
+        affiliate_commission_rate: affiliateCommissionRate,
+
         updated_at: new Date().toISOString()
       })
       .eq("id", productId)
@@ -119,11 +124,7 @@ export async function updateProductAction(formData: FormData) {
 
     if (updateError) return { success: false, error: `Gagal memperbarui database produk: ${updateError.message}` };
 
-    // =========================================================================
-    // --- 3. FIX TOTAL: SKEMA BONGKAR & PASANG MASSAL (CLEAN & RE-INSERT) ---
-    // =========================================================================
-    
-    // Pertama, pastikan produk ini beneran milik si user yang lagi login sebelum dihapus
+    // --- 3. SKEMA BONGKAR & PASANG MASSAL VARIANT VARIATION ---
     const { data: verifyProduct } = await supabase
       .from("products")
       .select("id")
@@ -135,7 +136,6 @@ export async function updateProductAction(formData: FormData) {
       return { success: false, error: "Produk tidak ditemukan atau Anda tidak memiliki akses." };
     }
 
-    // Eksekusi Hapus Total Berdasarkan Product ID
     const { error: deleteMassalError } = await supabase
       .from("product_variations")
       .delete()
@@ -145,7 +145,6 @@ export async function updateProductAction(formData: FormData) {
       return { success: false, error: `Gagal total membersihkan variasi lama: ${deleteMassalError.message}` };
     }
 
-    // Jika ada data variasi baru dari form UI, langsung hantam insert masal
     if (variations.length > 0) {
       const payloadVariasiBaru = variations.map((v: any, index: number) => {
         const cleanVarName = v.name ? v.name.toUpperCase().replace(/[^A-Z0-9]/g, "_") : "VAR";
@@ -159,7 +158,6 @@ export async function updateProductAction(formData: FormData) {
           is_active: v.active !== undefined ? v.active : true,
           variant_image_url: v.mainImagePreview || v.variant_image_url || null,
           price: v.price && v.price !== "" ? Number(v.price) : Number(price),
-          // Fallback ke nominal diskon produk utama kalau di tingkat variasi belum ditentukan nilainya
           discounted_price: v.discountedPrice && v.discountedPrice !== "" ? Number(v.discountedPrice) : discountedPrice,
           stock: v.quantity && v.quantity !== "" ? Number(v.quantity) : Number(stock),
           weight: v.weight && v.weight !== "" ? Number(v.weight) : Number(weight),

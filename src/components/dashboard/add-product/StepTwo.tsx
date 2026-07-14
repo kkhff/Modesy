@@ -3,7 +3,6 @@
 import Link from "next/link";
 import React, { useState, useEffect, useRef } from "react";
 import { GripVertical, Trash2, Check, ArrowLeft, Video, Music, Plus, X, Image as ImageIcon } from "lucide-react";
-import toast from "react-hot-toast";
 
 interface OptionValue {
   id: string;
@@ -40,6 +39,10 @@ export default function StepTwo({ data, updateData, onBack, onSubmit }: StepTwoP
   const [noDiscount, setNoDiscount] = useState<boolean>(false);
   const [noVat, setNoVat] = useState<boolean>(false);
 
+  // 🌟 STATE BARU: AFFILIATE CONTROLLER
+  const [isAffiliate, setIsAffiliate] = useState<boolean>(!!data.is_affiliate);
+  const [affiliateRate, setAffiliateRate] = useState<number>(data.affiliate_commission_rate !== undefined ? Number(data.affiliate_commission_rate) : 5);
+
   const commissionRate = 15;
   const targetPrice = noDiscount ? price : discountedPrice;
   const netEarnings = targetPrice - (targetPrice * commissionRate) / 100;
@@ -50,13 +53,19 @@ export default function StepTwo({ data, updateData, onBack, onSubmit }: StepTwoP
     return [{ id: "opt_1", name: "Color", type: "swatch_color", values: [] }];
   });
 
-  // 🌟 FIX AMAN 1: Hanya isi state lokal dari DB saat halaman pertama kali dibuka (Initial Hydration)
-  // Cara ini memutus rantai infinite loop karena dependency array-nya kosong []
   useEffect(() => {
     if (data.options && data.options.length > 0) {
       setOptions(data.options);
     }
   }, []);
+  useEffect(() => {
+    if (data.is_affiliate !== undefined) {
+      setIsAffiliate(!!data.is_affiliate);
+    }
+    if (data.affiliate_commission_rate !== undefined && data.affiliate_commission_rate !== null) {
+      setAffiliateRate(Number(data.affiliate_commission_rate));
+    }
+  }, [data.is_affiliate, data.affiliate_commission_rate]);
 
   // --- STATE TABEL VARIASI MATRIX ---
   const [variants, setVariants] = useState<any[]>(() => {
@@ -85,13 +94,11 @@ export default function StepTwo({ data, updateData, onBack, onSubmit }: StepTwoP
     return "";
   });
 
-  // --- STATE MEDIA PREVIEW ---
   const [videoName, setVideoName] = useState<string>("");
   const [audioName, setAudioName] = useState<string>("");
   const videoInputRef = useRef<HTMLInputElement>(null);
   const audioInputRef = useRef<HTMLInputElement>(null);
 
-  // --- STATE API LOKASI GEOGRAFI ---
   const [countries, setCountries] = useState<any[]>([]);
   const [states, setStates] = useState<any[]>([]);
   const [cities, setCities] = useState<any[]>([]);
@@ -107,9 +114,7 @@ export default function StepTwo({ data, updateData, onBack, onSubmit }: StepTwoP
     "X-CSCAPI-KEY": process.env.NEXT_PUBLIC_CSC_API_KEY || "",
   };
 
-  // =========================================================================
-  // --- 🌟 KARTESIAN MATRIX GENERATOR (ANTI-BOCOR / AMAN DARI SIKLUS LOOP) ---
-  // =========================================================================
+  // KARTESIAN MATRIX GENERATOR
   useEffect(() => {
     const validOptions = options.filter(
       (opt) => opt.values.some((v) => v.name.trim() !== "")
@@ -152,9 +157,7 @@ export default function StepTwo({ data, updateData, onBack, onSubmit }: StepTwoP
       const primaryStage = combo.find((c) => c.optionType === "swatch_color" || c.optionType === "swatch_image") || combo[0];
       
       const existingLocalState = variants && variants[index];
-
       const isNameChanged = existingLocalState && existingLocalState.name !== variantName;
-      
       const finalSku = isNameChanged ? formattedSku : (existingLocalState?.sku || formattedSku);
 
       return {
@@ -175,10 +178,9 @@ export default function StepTwo({ data, updateData, onBack, onSubmit }: StepTwoP
 
     setVariants(newVariants);
 
-    // 🔥 FIX AMAN 2: Setorkan data variations & options secara bersamaan di sini
     updateData((prev: any) => ({
       ...prev,
-      options: options, // Di-update berbarengan agar form global tersinkronisasi
+      options: options,
       variations: newVariants.map((nv) => ({
         ...nv,
         is_default: String(defaultVariantId) === String(nv.id),
@@ -190,7 +192,7 @@ export default function StepTwo({ data, updateData, onBack, onSubmit }: StepTwoP
     }
   }, [options, data.sku]);
 
-  // --- SINKRONISASI API GEOGRAFI ---
+  // SINKRONISASI API GEOGRAFI
   useEffect(() => {
     if (data.country && countries.length > 0) {
       const foundCountry = countries.find(c => c.name.toLowerCase() === data.country.toLowerCase());
@@ -209,10 +211,9 @@ export default function StepTwo({ data, updateData, onBack, onSubmit }: StepTwoP
     }
   }, [data.state, states]);
 
+  // 🌟 PERBAIKAN SINKRONISASI PARENT STATE (TERMASUK INTEGRASI FIELD AFFILIATE)
   useEffect(() => {
     const calculatedPrice = noDiscount ? price : discountedPrice;
-    
-    // Hitung persentase diskon (rate) secara presisi bulat
     const rate = price > 0 ? Math.round(((price - calculatedPrice) / price) * 100) : 0;
 
     const mappedVariants = variants.map((v) => ({
@@ -220,21 +221,21 @@ export default function StepTwo({ data, updateData, onBack, onSubmit }: StepTwoP
       is_default: String(defaultVariantId) === String(v.id),
     }));
 
-    // 🌟 SINKRONISASI TOTAL KE PARENT STATE
     updateData((prev: any) => ({
       ...prev,
       price,
-      // Menyimpan nominal harga setelah diskon untuk tabel public.products
       discountedPrice: noDiscount ? price : discountedPrice, 
-      // Menyimpan rate persen diskonnya
       discountRate: noDiscount ? 0 : (rate < 0 ? 0 : rate),
       vatRate: noVat ? 0 : vatRate,
       variations: mappedVariants,
+      
+      // 🌟 Masukkan data kuncian objek baru untuk dikirim ke tabel Supabase
+      is_affiliate: isAffiliate,
+      affiliate_commission_rate: isAffiliate ? affiliateRate : null
     }));
-  }, [price, discountedPrice, vatRate, noDiscount, noVat, defaultVariantId, variants]);
+  }, [price, discountedPrice, vatRate, noDiscount, noVat, defaultVariantId, variants, isAffiliate, affiliateRate]);
 
-
-  // --- API FETCH GEOGRAFI ---
+  // API FETCH GEOGRAFI
   useEffect(() => {
     const fetchCountries = async () => {
       try {
@@ -290,7 +291,7 @@ export default function StepTwo({ data, updateData, onBack, onSubmit }: StepTwoP
     fetchCities();
   }, [selectedCountry.iso2, selectedState.iso2]);
 
-  // --- HANDLERS ---
+  // HANDLERS
   const addProductOption = () => {
     const newOpt: ProductOption = {
       id: `opt_${Date.now()}`,
@@ -432,9 +433,9 @@ export default function StepTwo({ data, updateData, onBack, onSubmit }: StepTwoP
         </div>
       </div>
 
-      {/* 2. PRODUCT PRICE SECTION */}
+      {/* 2. PRODUCT PRICE & AFFILIATE PROGRAM SECTION */}
       <div>
-        <h3 className="font-bold text-xs text-slate-800 uppercase tracking-wider mb-4 border-l-4 border-[#00a896] pl-2">Product Price</h3>
+        <h3 className="font-bold text-xs text-slate-800 uppercase tracking-wider mb-4 border-l-4 border-[#00a896] pl-2">Product Price & Program</h3>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           <div>
             <label className="block text-xs font-semibold text-slate-700 mb-2">Price</label>
@@ -467,18 +468,74 @@ export default function StepTwo({ data, updateData, onBack, onSubmit }: StepTwoP
           </div>
         </div>
 
+        {/* 🌟 BARIS BARU: INTERFASE DROPDOWN DAN RATE AFILIASI DENGAN VALIDASI MIN 5% */}
+        <div className="mt-6 pt-6 border-t border-slate-100 grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div>
+            <label className="block text-xs font-bold text-slate-700 mb-2">Allow Affiliate Program</label>
+            <select
+              value={isAffiliate ? "yes" : "no"}
+              onChange={(e) => setIsAffiliate(e.target.value === "yes")}
+              className="w-full border border-slate-200 bg-white h-10 px-3 rounded-sm text-xs focus:outline-none focus:border-[#00a896] font-medium text-slate-700"
+            >
+              <option value="no">No (Disable Program)</option>
+              <option value="yes">Yes (Enable Program)</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-xs font-bold text-slate-700 mb-2">
+              Affiliate Commission Rate (%) <span className="text-red-500 font-medium">(Min 5%)</span>
+            </label>
+            <div className="flex shadow-2xs rounded-sm">
+              <span className="bg-slate-100 border border-r-0 border-slate-200 px-3 text-slate-500 text-xs flex items-center">%</span>
+              <input
+                type="number"
+                disabled={!isAffiliate}
+                value={isAffiliate ? affiliateRate : ""}
+                min={5}
+                onChange={(e) => {
+                  const val = Number(e.target.value);
+                  setAffiliateRate(val);
+                }}
+                // 🌟 Ketika user melepaskan klik/selesai input, paksa bulatkan ke batas aman minimal 5%
+                onBlur={(e) => {
+                  const val = Number(e.target.value);
+                  if (val < 5) {
+                    setAffiliateRate(5);
+                  }
+                }}
+                placeholder="5"
+                className="w-full border border-slate-200 h-10 px-3 text-xs focus:outline-none focus:border-[#00a896] disabled:bg-slate-100 text-slate-700 font-bold"
+              />
+            </div>
+          </div>
+        </div>
+
         <div className="mt-6 bg-slate-50 border border-slate-200 rounded-sm p-4 text-xs font-bold text-slate-700 space-y-2 max-w-md shadow-2xs">
           <div className="flex justify-between">
             <span>Discount Rate:</span>
             <span className="font-medium">{noDiscount ? "0%" : `${Math.max(0, Math.round(((price - discountedPrice) / (price || 1)) * 100))}%`}</span>
           </div>
           <div className="flex justify-between">
-            <span>Commission Rate:</span>
-            <span className="font-medium">15%</span>
+            <span>Platform Commission Rate:</span>
+            <span className="font-medium">{commissionRate}%</span>
           </div>
+          {isAffiliate && (
+            <div className="flex justify-between text-emerald-600 font-bold">
+              <span>Marketer Affiliate Commission:</span>
+              <span>{affiliateRate < 5 ? 5 : affiliateRate}%</span>
+            </div>
+          )}
           <div className="flex justify-between border-t border-slate-200 pt-2 text-slate-800 font-extrabold text-[13px]">
             <span>You Will Earn (USD):</span>
-            <span>${netEarnings > 0 ? netEarnings.toFixed(2) : "0.00"} + VAT</span>
+            <span>
+              ${isAffiliate 
+                ? (netEarnings - (targetPrice * (affiliateRate < 5 ? 5 : affiliateRate)) / 100) > 0 
+                  ? (netEarnings - (targetPrice * (affiliateRate < 5 ? 5 : affiliateRate)) / 100).toFixed(2) 
+                  : "0.00"
+                : netEarnings > 0 ? netEarnings.toFixed(2) : "0.00"
+              } + VAT
+            </span>
           </div>
         </div>
       </div>
@@ -587,7 +644,7 @@ export default function StepTwo({ data, updateData, onBack, onSubmit }: StepTwoP
                 return (
                   <tr key={item.id} className={`hover:bg-slate-50/50 ${isRowDefault ? "bg-amber-50/20" : ""}`}>
                     <td className="p-3 text-center">
-                      <input type="checkbox" checked={item.active}   onChange={(e) => handleVariantTableInput(item.id, "active", e.target.checked)} className="w-3.5 h-3.5 accent-[#00a896]" />
+                      <input type="checkbox" checked={item.active} onChange={(e) => handleVariantTableInput(item.id, "active", e.target.checked)} className="w-3.5 h-3.5 accent-[#00a896]" />
                     </td>
                     <td className="p-3">
                       {item.type === "swatch_color" ? (
@@ -609,59 +666,58 @@ export default function StepTwo({ data, updateData, onBack, onSubmit }: StepTwoP
                       <input type="text" value={item.sku} onChange={(e) => handleVariantTableInput(item.id, "sku", e.target.value)} className="border border-slate-200 bg-white px-2 py-1.5 w-full rounded-sm text-xs font-mono" />
                     </td>
                     <td className="p-3">
-  <input
-    type="number"
-    value={item.price || ""} // 🌟 PAKAI KURUNG KURAWAL, BUKAN TANDA KUTIP
-    placeholder={String(price)}
-    onChange={(e) => handleVariantTableInput(item.id, "price", e.target.value)}
-    className="border border-slate-200 px-2 py-1.5 w-20 rounded-sm focus:outline-none"
-  />
-</td>
-<td className="p-3">
-  <input
-    type="number"
-    value={item.discountedPrice || ""} // 🌟 PAKAI KURUNG KURAWAL
-    placeholder={String(noDiscount ? price : discountedPrice)}
-    onChange={(e) => handleVariantTableInput(item.id, "discountedPrice", e.target.value)}
-    className="border border-slate-200 px-2 py-1.5 w-20 rounded-sm focus:outline-none"
-  />
-</td>
-<td className="p-3">
-  <input
-    type="number"
-    value={item.quantity || ""} // 🌟 PAKAI KURUNG KURAWAL
-    placeholder={String(data.stock || 0)}
-    onChange={(e) => handleVariantTableInput(item.id, "quantity", e.target.value)}
-    className="border border-slate-200 px-2 py-1.5 w-20 rounded-sm focus:outline-none"
-  />
-</td>
-<td className="p-3">
-  <input
-    type="number"
-    value={item.weight || ""} // 🌟 PAKAI KURUNG KURAWAL
-    placeholder={String(data.weight || 0.5)}
-    onChange={(e) => handleVariantTableInput(item.id, "weight", e.target.value)}
-    className="border border-slate-200 px-2 py-1.5 w-20 rounded-sm focus:outline-none"
-  />
-</td>
+                      <input
+                        type="number"
+                        value={item.price || ""}
+                        placeholder={String(price)}
+                        onChange={(e) => handleVariantTableInput(item.id, "price", e.target.value)}
+                        className="border border-slate-200 px-2 py-1.5 w-20 rounded-sm focus:outline-none"
+                      />
+                    </td>
+                    <td className="p-3">
+                      <input
+                        type="number"
+                        value={item.discountedPrice || ""}
+                        placeholder={String(noDiscount ? price : discountedPrice)}
+                        onChange={(e) => handleVariantTableInput(item.id, "discountedPrice", e.target.value)}
+                        className="border border-slate-200 px-2 py-1.5 w-20 rounded-sm focus:outline-none"
+                      />
+                    </td>
+                    <td className="p-3">
+                      <input
+                        type="number"
+                        value={item.quantity || ""}
+                        placeholder={String(data.stock || 0)}
+                        onChange={(e) => handleVariantTableInput(item.id, "quantity", e.target.value)}
+                        className="border border-slate-200 px-2 py-1.5 w-20 rounded-sm focus:outline-none"
+                      />
+                    </td>
+                    <td className="p-3">
+                      <input
+                        type="number"
+                        value={item.weight || ""}
+                        placeholder={String(data.weight || 0.5)}
+                        onChange={(e) => handleVariantTableInput(item.id, "weight", e.target.value)}
+                        className="border border-slate-200 px-2 py-1.5 w-20 rounded-sm focus:outline-none"
+                      />
+                    </td>
                     <td className="p-3 text-center">
                       <div className="flex justify-center">
-<input 
-  type="radio" 
-  name="defaultVariantRadio" 
-  checked={isRowDefault} 
-  onChange={() => {
-    const targetId = String(item.id);
-    setDefaultVariantId(targetId);
-    
-    // Paksa perbarui properti is_default di tingkat array lokal detik itu juga
-    setVariants(prev => prev.map(v => ({
-      ...v,
-      is_default: String(v.id) === targetId
-    })));
-  }} 
-  className="w-4 h-4 accent-[#00a896] cursor-pointer" 
-/>                      </div>
+                        <input 
+                          type="radio" 
+                          name="defaultVariantRadio" 
+                          checked={isRowDefault} 
+                          onChange={() => {
+                            const targetId = String(item.id);
+                            setDefaultVariantId(targetId);
+                            setVariants(prev => prev.map(v => ({
+                              ...v,
+                              is_default: String(v.id) === targetId
+                            })));
+                          }} 
+                          className="w-4 h-4 accent-[#00a896] cursor-pointer" 
+                        />
+                      </div>
                     </td>
                     <td className="p-3">
                       <div className="flex justify-center">
@@ -743,7 +799,7 @@ export default function StepTwo({ data, updateData, onBack, onSubmit }: StepTwoP
             disabled={!selectedState.iso2 || loadingCities}
             onChange={(e) => {
               setSelectedCity(e.target.value);
-              updateData((prev: any) => ({ ...prev, cityId: e.target.value }));
+              updateData((prev: any) => ({ ...prev, city: e.target.value }));
             }}
             className="border border-slate-200 h-10 px-3 rounded-sm text-xs bg-white text-slate-700 cursor-pointer disabled:bg-slate-100"
           >

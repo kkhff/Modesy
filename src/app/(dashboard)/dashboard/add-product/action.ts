@@ -46,6 +46,9 @@ export async function createProductAction(formData: FormData) {
     const brandId = formData.get("brand") ? Number(formData.get("brand")) : null;
     const externalLink = formData.get("externalLink") as string || null;
     const demoUrl = formData.get("demoUrl") as string || null;
+    const isAffiliate = formData.get("is_affiliate") === "true";
+    const rawRate = formData.get("affiliate_commission_rate");
+    const affiliateCommissionRate = isAffiliate && rawRate ? Number(rawRate) : null;
     
     const titleEn = formData.get("titleEn") as string;
     const titleId = formData.get("titleId") as string || null;
@@ -153,6 +156,8 @@ export async function createProductAction(formData: FormData) {
           length: length,
           width: width,
           height: height,
+          is_affiliate: isAffiliate,
+        affiliate_commission_rate: affiliateCommissionRate,
           delivery_time: deliveryTime,
           regular_license_price: regularLicensePrice,
           extended_license_price: extendedLicensePrice,

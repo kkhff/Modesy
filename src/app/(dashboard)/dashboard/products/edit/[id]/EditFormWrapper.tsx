@@ -11,7 +11,6 @@ interface EditFormWrapperProps {
   initialData: any;
 }
 
-// --- FUNGSI PARSER HIBRIDA PINTAR (MENJAGA REFERENSI ID DATABASE ASLI) ---
 function parseExistingVariationsToOptions(variations: any[], variationOptionsBlueprint: any[]): any[] {
   if (!variations || variations.length === 0) {
     return [{ id: "opt_1", name: "Color", type: "swatch_color", values: [] }];
@@ -22,11 +21,9 @@ function parseExistingVariationsToOptions(variations: any[], variationOptionsBlu
     return [{ id: "opt_1", name: "Color", type: "swatch_color", values: [] }];
   }
 
-  // Pecah nama kombinasi variasi database untuk tahu ada berapa opsi terdaftar
   const detectedValuesFromDb = firstVariant.name.split(",").map((s: string) => s.trim());
   const structureLength = detectedValuesFromDb.length;
 
-  // 1. Petakan nama & tipe opsi berdasarkan objek blueprint variation_options di database
   const parsedOptions = Array.from({ length: structureLength }).map((_, idx) => {
     let optionName = idx === 0 ? "Color" : "Size";
     let optionType: "dropdown" | "radio" | "swatch_color" | "swatch_image" = "dropdown";
@@ -48,7 +45,6 @@ function parseExistingVariationsToOptions(variations: any[], variationOptionsBlu
       }
     }
 
-    // Fallback tebak tipe jika data produk lama tipenya belum tersimpan detail
     const hasAnyImage = variations.some(v => v.variant_image_url && v.variant_image_url.trim() !== "");
     const hasAnyColor = variations.some(v => v.color && v.color.trim() !== "" && v.color !== "#ffffff" && v.color !== "NULL");
 
@@ -69,7 +65,6 @@ function parseExistingVariationsToOptions(variations: any[], variationOptionsBlu
     };
   });
 
-  // 2. Ekstrak baris value dari matrix variations tanpa duplikasi
   variations.forEach((v) => {
     if (!v.name) return;
     const valuesArray = v.name.split(",").map((s: string) => s.trim());
@@ -84,7 +79,6 @@ function parseExistingVariationsToOptions(variations: any[], variationOptionsBlu
         const hasColor = v.color || "#ffffff";
 
         parsedOptions[idx].values.push({
-          // KUNCI UTAMA: Pertahankan v.id asli number Supabase agar tidak menjadi hash string acak!
           id: v.id ? Number(v.id) : `val_existing_${idx}_${Math.random().toString(36).substr(2, 5)}`,
           name: valName,
           color: parsedOptions[idx].type === "swatch_color" ? hasColor : undefined,
@@ -102,7 +96,6 @@ export default function EditFormWrapper({ initialData }: EditFormWrapperProps) {
   const [step, setStep] = useState(1);
   const router = useRouter();
   
-  // Set global form data state beserta options hasil parse ter-hydrated
   const [formData, setFormData] = useState(() => {
     const populatedOptions = parseExistingVariationsToOptions(
       initialData.variations, 
@@ -120,6 +113,12 @@ export default function EditFormWrapper({ initialData }: EditFormWrapperProps) {
   const handleBackStep = () => setStep(1);
   
   const handleSaveChangesSubmit = async () => {
+    // 🌟 BUMPER VALIDASI MINIMAL 5% JIKA PROGRAM AFILIASI DIAKTIFKAN
+    if (formData.is_affiliate && (formData.affiliate_commission_rate === null || Number(formData.affiliate_commission_rate) < 5)) {
+      Swal.fire("Error!", "Komisi affiliate minimal 5%, kasihan marketer-nya Fi!", "error");
+      return;
+    }
+
     Swal.fire({
       title: "Save Changes?",
       text: "Are you sure you want to update this product listing?",
@@ -135,7 +134,6 @@ export default function EditFormWrapper({ initialData }: EditFormWrapperProps) {
         try {
           const dataPayload = new FormData();
           
-          // Kirim blueprint nama dan tipe opsi saat ini ke JSONB database
           const optionBlueprint = formData.options.map((opt: any) => ({
             name: opt.name,
             type: opt.type
@@ -149,7 +147,10 @@ export default function EditFormWrapper({ initialData }: EditFormWrapperProps) {
           dataPayload.append("address", formData.address || "");
           dataPayload.append("zipCode", formData.zipCode || "");
 
-          // Kemas seluruh field form data lainnya ke FormData
+          // 🌟 APPEND DATA AFILIASI DARI FRONTEND KE FORMDATA PAYLOAD
+          dataPayload.append("is_affiliate", String(formData.is_affiliate));
+          dataPayload.append("affiliate_commission_rate", formData.affiliate_commission_rate !== null ? String(formData.affiliate_commission_rate) : "");
+
           Object.keys(formData).forEach((key) => {
             if (key === "images") {
               formData.images.forEach((file: File) => dataPayload.append("images", file));
@@ -158,7 +159,7 @@ export default function EditFormWrapper({ initialData }: EditFormWrapperProps) {
             } else if (
               key !== "options" && 
               key !== "variation_options" &&
-              !["country", "state", "cityId", "address","discountedPrice", "zipCode"].includes(key) // Jangan di-append dobel
+              !["country", "state", "cityId", "address", "discountedPrice", "zipCode", "is_affiliate", "affiliate_commission_rate"].includes(key)
             ) { 
               dataPayload.append(key, formData[key]);
             }
@@ -190,7 +191,6 @@ export default function EditFormWrapper({ initialData }: EditFormWrapperProps) {
 
   return (
     <div className={isPending ? "opacity-60 pointer-events-none" : ""}>
-      {/* Indikator Navigasi Tab */}
       <div className="flex items-center justify-center gap-6 mb-8 border-b border-slate-100 pb-4 select-none">
         <div onClick={() => setStep(1)} className={`cursor-pointer flex items-center gap-2 text-xs font-bold ${step === 1 ? "text-[#00a896]" : "text-slate-400"}`}>
           <span className={`w-5 h-5 rounded-full flex items-center justify-center border text-[10px] ${step === 1 ? "bg-[#00a896] text-white border-[#00a896]" : "border-slate-300"}`}>1</span>
@@ -203,7 +203,6 @@ export default function EditFormWrapper({ initialData }: EditFormWrapperProps) {
         </div>
       </div>
 
-      {/* Render Multi-Step Form */}
       {step === 1 && (
         <StepOne data={formData} updateData={setFormData} onNext={handleNextStep} />
       )}

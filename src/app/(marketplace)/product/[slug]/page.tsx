@@ -10,12 +10,34 @@ async function getProductDetail(slug: string) {
     { cookies: { get(name: string) { return cookieStore.get(name)?.value; } } }
   );
 
-  // Ambil data produk utama beserta relation profile vendor
+  
+
+  // 🌟 SEKARANG SUDAH MAJU: Ambil data produk utama, relation vendor, brand, dan review asli beserta data pembuat review
   const { data: product, error: productError } = await supabase
     .from("products")
-    .select("*")
+    .select(`
+      *, 
+      profiles(*),
+      brands(name),
+      wishlists(count),
+      product_reviews(
+  id,
+  user_id, 
+  rating, 
+  review_text, 
+  created_at, 
+  profiles(first_name, last_name, avatar_url)
+), product_comments(
+      id,
+      parent_id,
+      comment_text,
+      user_id,
+      created_at,
+      profiles(first_name, last_name)
+    )
+    `)
     .eq("slug", slug)
-    .maybeSingle(); // Menggunakan maybeSingle lebih aman daripada .single() agar tidak throw error fatal jika kosong
+    .maybeSingle(); 
 
   if (productError) {
     console.error("Supabase Product Error:", productError.message);
@@ -40,12 +62,35 @@ async function getProductDetail(slug: string) {
   };
 }
 
-// 🌟 PERBAIKAN DI SINI: params di-unwrap dengan Promise agar kompatibel dengan Next.js terbaru
+// Fungsi pembantu untuk mengambil data profil pembeli yang sedang login saat ini
+async function getCurrentUserProfile() {
+  const cookieStore = await cookies();
+  const supabase = createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    { cookies: { get(name: string) { return cookieStore.get(name)?.value; } } }
+  );
+
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session?.user) return null;
+
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("*")
+    .eq("id", session.user.id)
+    .maybeSingle();
+
+  return profile;
+}
+
 export default async function ProductDetailPage({ params }: { params: Promise<{ slug: string }> }) {
-  // 🌟 Await params-nya dulu biar slug-nya kebaca string asli, bukan Promise!
   const resolvedParams = await params;
   
-  const product = await getProductDetail(resolvedParams.slug);
+  // Ambil data produk dan profile pembeli secara paralel biar loading kilat
+  const [product, currentUserProfile] = await Promise.all([
+    getProductDetail(resolvedParams.slug),
+    getCurrentUserProfile()
+  ]);
 
   if (!product) {
     return (
@@ -56,5 +101,10 @@ export default async function ProductDetailPage({ params }: { params: Promise<{ 
     );
   }
 
-  return <ProductDetailClient product={product} />;
+  return (
+    <ProductDetailClient 
+      product={product} 
+      currentUserProfile={currentUserProfile} 
+    />
+  );
 }

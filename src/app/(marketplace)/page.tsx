@@ -2,8 +2,9 @@ import React from "react";
 import Link from "next/link";
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
-import { blogsMock } from "@/lib/mockData"; // Tetap pakai mock untuk blog jika belum ada tabelnya
-import { Heart, Star, Eye, ArrowRight, MessageSquare, Calendar } from "lucide-react";
+import { blogsMock } from "@/lib/mockData";
+import { Heart, Star, ShoppingBag, ArrowRight, MessageSquare, Calendar } from "lucide-react";
+import ClientActionWrapper from "./ClientActionWrapper"; // Kita buat wrapper kecil untuk handle click event client
 
 // Interface data kategori dari DB
 interface DbCategory {
@@ -21,25 +22,6 @@ interface DbBrand {
   slug: string;
   logo_url: string | null;
   show_on_slider: boolean;
-}
-
-// Interface data produk dari DB Supabase
-interface DbProduct {
-  id: number;
-  user_id: string;
-  title: string;
-  slug: string;
-  price: number;
-  discount_rate: number;
-  discounted_price: number | null;
-  stock: number;
-  image_urls: string[] | null;
-  is_promoted: boolean;
-  created_at: string;
-  rating: number | null;
-  profiles?: {
-    username: string | null;
-  } | null;
 }
 
 // 1. Fetch data kategori dari Supabase
@@ -97,8 +79,8 @@ async function getHomepageBrands() {
   return (brands as DbBrand[]) || [];
 }
 
-// 3. FETCH DATA PRODUK ASLI DARI DATABASE SUPABASE
-async function getHomepageProducts() {
+// 3. FETCH DATA PRODUK BESERTA PROFIL USER LOGIN (Untuk cross-check wishlist)
+async function getHomepageData() {
   const cookieStore = await cookies();
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -110,23 +92,46 @@ async function getHomepageProducts() {
     }
   );
 
+  // Ambil user id jika sedang dalam kondisi login
+  const { data: { session } } = await supabase.auth.getSession();
+  const currentUserId = session?.user?.id || null;
+
   const { data: products, error } = await supabase
     .from("products")
-    .select("id, user_id, title, slug, price, discount_rate, discounted_price, stock, image_urls, is_promoted, created_at, rating")
+    .select("id, user_id, title, slug, price, discount_rate, discounted_price, stock, image_urls, is_promoted, created_at, rating, profiles(first_name, last_name)")
     .order("created_at", { ascending: false });
 
   if (error) {
     console.error("Gagal mengambil data produk asli:", error.message);
-    return [];
+    return { products: [], currentUserId };
   }
 
-  return (products as any[]) || [];
+  // Jika user login, ambil daftar ID produk yang sudah masuk wishlist miliknya
+  let userWishlistedIds: number[] = [];
+  if (currentUserId) {
+    const { data:  dataWish } = await supabase
+      .from("wishlists")
+      .select("product_id")
+      .eq("user_id", currentUserId);
+    
+    if (dataWish) {
+      userWishlistedIds = dataWish.map(w => Number(w.product_id));
+    }
+  }
+
+  // Map data untuk menandai properti isWished secara dinamis dari server render awal
+  const mappedProducts = (products || []).map(p => ({
+    ...p,
+    isWished: userWishlistedIds.includes(Number(p.id))
+  }));
+
+  return { products: mappedProducts, currentUserId };
 }
 
 export default async function HomePage() {
   const homeCategory = await getHomepageCategories();
   const dbBrands = await getHomepageBrands();
-  const allDbProducts = await getHomepageProducts();
+  const { products: allDbProducts, currentUserId } = await getHomepageData();
 
   // Filter Data Berdasarkan Kondisi Asli Database
   const specialOffers = allDbProducts.filter(p => p.discount_rate && p.discount_rate > 0).slice(0, 4);
@@ -191,7 +196,7 @@ export default async function HomePage() {
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-5">
           {specialOffers.map((product) => (
-            <ProductCard key={product.id} product={product} />
+            <ProductCard key={product.id} product={product} currentUserId={currentUserId} />
           ))}
         </div>
       </div>
@@ -222,7 +227,7 @@ export default async function HomePage() {
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-5">
           {featuredProducts.map((product) => (
-            <ProductCard key={product.id} product={product} />
+            <ProductCard key={product.id} product={product} currentUserId={currentUserId} />
           ))}
         </div>
       </div>
@@ -237,7 +242,7 @@ export default async function HomePage() {
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-5">
           {newArrivals.map((product) => (
-            <ProductCard key={product.id} product={product} />
+            <ProductCard key={product.id} product={product} currentUserId={currentUserId} />
           ))}
         </div>
       </div>
@@ -302,8 +307,8 @@ export default async function HomePage() {
   );
 }
 
-// 🌟 DIBERSIHKAN DARI CODES INTERAKTIF KLIEN AGAR AMAN DI RUNTIME SERVER COMPONENT
-function ProductCard({ product }: { product: any }) {
+// 🌟 RENDER PRODUCT CARD DENGAN WRAPPER ACTION INTERAKTIF
+function ProductCard({ product, currentUserId }: { product: any; currentUserId: string | null }) {
   const price = Number(product.price) || 0;
   const dbDiscountedPrice = product.discounted_price !== null ? Number(product.discounted_price) : null;
   const hasDiscount = (product.discount_rate && product.discount_rate > 0) || (dbDiscountedPrice !== null && dbDiscountedPrice < price);
@@ -313,17 +318,19 @@ function ProductCard({ product }: { product: any }) {
     ? product.image_urls[0] 
     : "https://placehold.co/400x500?text=No+Image";
 
-  const vendorName = product.profiles?.username || "Official Store";
+  const vendorName = product.profiles?.first_name && product.profiles?.last_name 
+    ? `${product.profiles.first_name} ${product.profiles.last_name}` 
+    : "Official Store";
 
   return (
-    <Link 
-      href={`/product/${product.slug}`} 
-      className="bg-white border border-gray-200 rounded-sm overflow-hidden relative shadow-xs hover:shadow-md transition-all duration-200 flex flex-col justify-between group cursor-pointer"
-    >
+    <div className="bg-white border border-gray-200 rounded-sm overflow-hidden relative shadow-xs hover:shadow-md transition-all duration-200 flex flex-col justify-between group h-full">
       <div>
         {/* AREA GAMBAR UTAMA */}
         <div className="w-full aspect-[4/5] bg-gray-50 relative overflow-hidden">
-          <img src={firstImage} alt={product.title} className="w-full h-full object-cover group-hover:scale-[1.02] transition-transform duration-300" />
+          {/* Link klik area gambar diarahkan ke halaman detail produk */}
+          <Link href={`/product/${product.slug}`} className="cursor-pointer block w-full h-full">
+            <img src={firstImage} alt={product.title} className="w-full h-full object-cover group-hover:scale-[1.02] transition-transform duration-300" />
+          </Link>
           
           {hasDiscount && product.discount_rate > 0 && (
             <span className="absolute top-3 left-3 bg-red-500 text-white font-bold text-[10px] px-2 py-0.5 rounded-xs shadow-xs z-10">
@@ -331,27 +338,24 @@ function ProductCard({ product }: { product: any }) {
             </span>
           )}
           
-          {/* TOMBOL HEART & EYE: Dipasangkan sebagai elemen visual murni tanpa handler onClick */}
-          <div className="absolute top-3 right-3 flex flex-col gap-2 translate-x-12 opacity-0 group-hover:translate-x-0 group-hover:opacity-100 transition-all duration-200 z-10">
-            <div className="w-8 h-8 bg-white hover:bg-gray-50 border border-gray-100 rounded-full flex items-center justify-center text-gray-500 hover:text-red-500 shadow-xs transition-colors">
-              <Heart className="w-4 h-4" />
-            </div>
-            <div className="w-8 h-8 bg-white hover:bg-gray-50 border border-gray-100 rounded-full flex items-center justify-center text-gray-500 hover:text-[#00a896] shadow-xs transition-colors">
-              <Eye className="w-4 h-4" />
-            </div>
-          </div>
+          {/* 🌟 INTEGRASI TOMBOL INTERAKTIF LIVE (WISHLIST & CART) */}
+          <ClientActionWrapper 
+            productId={product.id} 
+            currentUserId={currentUserId} 
+            initialWished={product.isWished} 
+          />
         </div>
         
         {/* AREA KONTEN TEKS */}
         <div className="p-3.5 space-y-1">
           <span className="text-[10px] text-gray-400 block font-medium uppercase tracking-wider">{vendorName}</span>
-          <h3 className="text-xs font-bold text-gray-800 group-hover:text-[#00a896] transition-colors line-clamp-2 min-h-[32px] leading-snug">
+          <Link href={`/product/${product.slug}`} className="text-xs font-bold text-gray-800 group-hover:text-[#00a896] transition-colors line-clamp-2 min-h-[32px] leading-snug block cursor-pointer">
             {product.title}
-          </h3>
+          </Link>
           
           <div className="flex items-center gap-0.5 pt-0.5">
             {[...Array(5)].map((_, i) => (
-              <Star key={i} className={`w-3 h-3 ${i < (product.rating || 5) ? "text-amber-400 fill-amber-400" : "text-gray-200 fill-gray-200"}`} />
+              <Star key={i} className={`w-3 h-3 ${i < (product.rating || 0) ? "text-amber-400 fill-amber-400" : "text-gray-200 fill-gray-200"}`} />
             ))}
             <span className="text-[10px] text-gray-400 ml-1">(0)</span>
           </div>
@@ -367,6 +371,6 @@ function ProductCard({ product }: { product: any }) {
           )}
         </div>
       </div>
-    </Link>
+    </div>
   );
 }

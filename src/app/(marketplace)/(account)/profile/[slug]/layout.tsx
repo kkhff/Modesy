@@ -5,6 +5,7 @@ import { cookies } from "next/headers";
 import { Mail, Phone, Calendar, Star } from "lucide-react";
 import Link from "next/link";
 import HeadersProfileMenu from "./HeadersProfileMenu"; // Client component pembantu tracking active tab
+import FollowButton from "@/components/profile/FollowButton";
 
 interface UserProfile {
   id: string;
@@ -142,6 +143,9 @@ export default async function ProfileLayout({
                   <span className="flex items-center gap-1"><Mail className="w-4 h-4" /> {profile.email}</span>
                 </>
               )}
+              <div className="ml-auto md:ml-2">
+                <FollowButton targetUserId={profile.id} />
+              </div>
             </div>
 
             {/* Social Media Links Render */}

@@ -282,7 +282,7 @@ useEffect(() => {
                         {/* KOTAK PRODUK JIKA LAMPIRAN ADA */}
                         {msg.products && (
                           <Link 
-                            href={`/products/detail/${msg.products.slug}`}
+                            href={`/product/${msg.products.slug}`}
                             className={`mb-2 px-2.5 py-1.5 rounded-xs flex items-center gap-2 border text-xs font-semibold transition-colors cursor-pointer block ${isMe ? "bg-teal-700/40 border-teal-600/30 text-white hover:bg-teal-700/60" : "bg-white border-gray-200 text-gray-700 hover:text-[#00a896]"}`}
                           >
                             <ShoppingBag className="w-3.5 h-3.5 shrink-0 inline mr-1" />

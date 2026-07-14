@@ -44,21 +44,17 @@ export default function StepOne({ data, updateData, onNext }: StepOneProps) {
             const currentCat = catRes.data.find(c => c.id === currentCatId);
             
             if (currentCat) {
-              // Jika ini kategori level 3 (Child)
               if (currentCat.parent_id !== null) {
                 const parentCat = catRes.data.find(c => c.id === currentCat.parent_id);
                 
                 if (parentCat && parentCat.parent_id !== null) {
-                  // Berarti fix 3 level: Grandparent -> Parent -> Child
                   setSelectedGrandparent(String(parentCat.parent_id));
                   setSelectedParent(String(parentCat.id));
                 } else if (parentCat) {
-                  // Berarti cuma 2 level: Grandparent -> Parent (Kategori saat ini adalah Child)
                   setSelectedGrandparent(String(parentCat.id));
                   setSelectedParent(String(currentCat.id));
                 }
               } else {
-                // Jika user cuma milih Grandparent saja sejak awal
                 setSelectedGrandparent(String(currentCat.id));
               }
             }
@@ -72,7 +68,7 @@ export default function StepOne({ data, updateData, onNext }: StepOneProps) {
       }
     };
     fetchMetadata();
-  }, [data.category]); // <--- Tambahkan data.category sebagai dependency tracking
+  }, [data.category]);
 
   const grandparents = dbCategories.filter(c => c.parent_id === null);
   const parents = dbCategories.filter(c => c.parent_id === Number(selectedGrandparent));
@@ -82,7 +78,6 @@ export default function StepOne({ data, updateData, onNext }: StepOneProps) {
     updateData((prev: any) => ({ ...prev, [field]: value }));
   };
 
-  // Drag and Drop Event Handlers
   const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     if (!isDragging) setIsDragging(true);
@@ -102,16 +97,26 @@ export default function StepOne({ data, updateData, onNext }: StepOneProps) {
     handleFiles(files);
   };
 
-  // Penggabungan file baru ke dalam state array images global
+  // 🌟 PERBAIKAN UTAMA 1: Tempelkan object URL permanen langsung ke objek file
   const handleFiles = async (files: FileList) => {
     const selectedFiles = Array.from(files);
     
-    // Proses semua gambar secara paralel untuk dikompresi ke .webp
     const processedFiles = await Promise.all(
-      selectedFiles.map((file) => processImageToWebp(file))
+      selectedFiles.map(async (file) => {
+        const webpFile = await processImageToWebp(file);
+        
+        // Simpan tautan preview agar tidak terbuat ulang berulang-kali saat render loop
+        Object.defineProperty(webpFile, 'preview', {
+          value: URL.createObjectURL(webpFile),
+          writable: true,
+          enumerable: true,
+          configurable: true
+        });
+        
+        return webpFile;
+      })
     );
 
-    // Simpan hasil kompresi .webp yang ringan ke state parent
     handleChange("images", [...(data.images || []), ...processedFiles]);
   };
 
@@ -123,12 +128,18 @@ export default function StepOne({ data, updateData, onNext }: StepOneProps) {
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!e.target.files) return;
     handleFiles(e.target.files);
-    e.target.value = ""; // Reset input value biar file yang sama bisa dipilih ulang
+    e.target.value = "";
   };
 
-  // Fungsi menghapus gambar dari list preview
   const removeImage = (indexToRemove: number, e: React.MouseEvent) => {
-    e.stopPropagation(); // Biar gak memicu event browse box
+    e.stopPropagation();
+    const imageToDelete = (data.images || [])[indexToRemove];
+    
+    // Revoke URL memori blob dari file yang dihapus agar performa browser tetap enteng
+    if (imageToDelete && (imageToDelete as any).preview) {
+      URL.revokeObjectURL((imageToDelete as any).preview);
+    }
+
     const filteredImages = (data.images || []).filter((_: any, idx: number) => idx !== indexToRemove);
     handleChange("images", filteredImages);
   };
@@ -149,7 +160,6 @@ export default function StepOne({ data, updateData, onNext }: StepOneProps) {
           const canvas = document.createElement("canvas");
           const ctx = canvas.getContext("2d");
 
-          // Atur batas resolusi maksimum (misalnya maks lebar/tinggi 1200px)
           const MAX_WIDTH = 1200;
           const MAX_HEIGHT = 1200;
           let width = img.width;
@@ -171,11 +181,9 @@ export default function StepOne({ data, updateData, onNext }: StepOneProps) {
           canvas.height = height;
           ctx?.drawImage(img, 0, 0, width, height);
 
-          // Konversi ke blob format webp dengan kualitas kompresi 0.8 (80%)
           canvas.toBlob(
             (blob) => {
               if (blob) {
-                // Ubah ekstensi nama file asli menjadi .webp
                 const newName = file.name.substring(0, file.name.lastIndexOf(".")) + ".webp";
                 const processedFile = new File([blob], newName, {
                   type: "image/webp",
@@ -183,7 +191,7 @@ export default function StepOne({ data, updateData, onNext }: StepOneProps) {
                 });
                 resolve(processedFile);
               } else {
-                resolve(file); // Fallback ke file asli jika blob gagal
+                resolve(file);
               }
             },
             "image/webp",
@@ -226,20 +234,19 @@ export default function StepOne({ data, updateData, onNext }: StepOneProps) {
           {isDragging && <p className="mt-2 text-xs font-medium text-[#00a896]">Release to upload images</p>}
         </div>
 
-        {/* COMPONENT IMAGE PREVIEW GRID */}
+        {/* 🌟 PERBAIKAN UTAMA 2: Render grid preview membaca property static preview tanpa memicu onLoad-revoke crash */}
         {data.images && data.images.length > 0 && (
           <div className="mt-4 grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 gap-3 p-3 bg-slate-50/50 border border-slate-200 rounded-sm">
-            {data.images.map((file: File, idx: number) => {
-              const previewUrl = URL.createObjectURL(file);
+            {data.images.map((file: any, idx: number) => {
+              const previewUrl = file.preview || (file instanceof File ? URL.createObjectURL(file) : file);
+              
               return (
                 <div key={idx} className="relative aspect-square border border-slate-200 bg-white rounded-sm overflow-hidden group shadow-2xs">
                   <img 
                     src={previewUrl} 
                     alt={`Preview ${idx}`} 
                     className="w-full h-full object-cover"
-                    onLoad={() => URL.revokeObjectURL(previewUrl)} // Bersihkan memori blob setelah dimuat
                   />
-                  {/* Tombol Delete Overlap */}
                   <button
                     type="button"
                     onClick={(e) => removeImage(idx, e)}
@@ -308,13 +315,11 @@ export default function StepOne({ data, updateData, onNext }: StepOneProps) {
         </div>
       </div>
 
-      {/* 4. CATEGORY & BRAND */}
-      {/* 4. CHAIRED CATEGORIES (3-LEVEL) & BRAND SELECTION */}
+      {/* 4. CLASSIFICATION & BRAND SELECTION */}
       <div className="space-y-4 bg-slate-50/40 p-4 border border-slate-100 rounded-sm">
         <p className="text-xs font-bold text-slate-700 mb-2">Classification & Brand</p>
         
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {/* Level 1: Kategori Utama (Grandparent) */}
           <div>
             <label className="block text-[11px] font-bold text-slate-600 mb-1">Main Category</label>
             <div className="relative">
@@ -324,7 +329,7 @@ export default function StepOne({ data, updateData, onNext }: StepOneProps) {
                   const val = e.target.value;
                   setSelectedGrandparent(val);
                   setSelectedParent("");
-                  handleChange("category", val); // Reset value utama di parent state
+                  handleChange("category", val);
                 }}
                 disabled={loadingDb}
                 className="w-full bg-white border border-slate-200 h-10 px-3 rounded-sm text-xs appearance-none focus:outline-none focus:border-[#00a896] cursor-pointer text-slate-700"
@@ -336,7 +341,6 @@ export default function StepOne({ data, updateData, onNext }: StepOneProps) {
             </div>
           </div>
 
-          {/* Level 2: Sub-Kategori (Parent) - Muncul jika Level 1 Terpilih */}
           <div>
             <label className="block text-[11px] font-bold text-slate-600 mb-1">Sub Category</label>
             <div className="relative">
@@ -357,7 +361,6 @@ export default function StepOne({ data, updateData, onNext }: StepOneProps) {
             </div>
           </div>
 
-          {/* Level 3: Sub Sub-Kategori (Child) - Muncul jika Level 2 Memiliki Sub-Item */}
           <div>
             <label className="block text-[11px] font-bold text-slate-600 mb-1">Specific Type (Child)</label>
             <div className="relative">
@@ -375,7 +378,6 @@ export default function StepOne({ data, updateData, onNext }: StepOneProps) {
           </div>
         </div>
 
-        {/* Baris Pilihan Merek (Brand) Terintegrasi ID Dinamis */}
         <div>
           <label className="block text-[11px] font-bold text-slate-600 mb-1">Brand (Optional)</label>
           <div className="relative">
@@ -448,7 +450,7 @@ export default function StepOne({ data, updateData, onNext }: StepOneProps) {
       {/* 6. DETAILS: INDONESIAN */}
       <Accordion className="border border-slate-200 rounded-sm bg-white overflow-hidden">
         <AccordionItem value="indonesian" className="border-none">
-          <AccordionTrigger className="bg-slate-50 px-4 py-2.5 border-b border-slate-200 hover:no-underline font-bold text-slate-700 text-xs py-0 h-10">
+          <AccordionTrigger className="bg-slate-50 px-4 py-2.5 border-b border-slate-200 hover:no-underline font-bold text-slate-700 text-xs h-10">
             Details: Indonesian (Optional)
           </AccordionTrigger>
           <AccordionContent className="p-4 space-y-4 pb-4">

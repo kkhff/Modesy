@@ -42,10 +42,14 @@ export default function AddProductPage() {
     discountRate: 0,
     vatRate: 0,
     stock: 1,
-    options: [],    // 🌟 1. TAMBAHKAN HIERARKI STATE UTAMA UNTUK FILTER OPTIONS SWATCH DI SINI
-    variations: [], // Menyimpan data warna/ukuran nullable pendukung e-commerce
+    options: [],    
+    variations: [], 
     regularLicensePrice: 0,
     extendedLicensePrice: 0,
+
+    // 🌟 1. TAMBAHKAN INITIAL STATE BARU UNTUK AFILIASI DI SINI
+    is_affiliate: false,
+    affiliate_commission_rate: null,
   });
 
   const handleNext = () => setStep(2);
@@ -53,7 +57,7 @@ export default function AddProductPage() {
 
   // Handler Submit Utama Berbasis FormData untuk integrasi ke Server Action
   const handleSubmitAll = async () => {
-    // 1. JALANKAN GERBANG VALIDASI (Hanya field yang required)
+    // 1. JALANKAN GERBANG VALIDASI
     if (!formData.images || formData.images.length === 0) {
       toast.error("Wajib mengunggah minimal 1 gambar produk!");
       return;
@@ -72,6 +76,12 @@ export default function AddProductPage() {
     }
     if (Number(formData.stock) < 1) {
       toast.error("Stok minimal untuk produk baru adalah 1!");
+      return;
+    }
+
+    // 🌟 VALIDASI TAMBAHAN BUMPER AFILIASI MINIMAL 5%
+    if (formData.is_affiliate && (formData.affiliate_commission_rate === null || Number(formData.affiliate_commission_rate) < 5)) {
+      toast.error("Komisi affiliate minimal 5%, kasihan marketer-nya Fi!");
       return;
     }
 
@@ -121,10 +131,12 @@ export default function AddProductPage() {
     serverFormData.append("regularLicensePrice", String(formData.regularLicensePrice));
     serverFormData.append("extendedLicensePrice", String(formData.extendedLicensePrice));
     
-    // DATA DIKIRIM KE ACTION BACKEND
     serverFormData.append("variations", JSON.stringify(formData.variations));
-    // 🌟 2. KUNCINYA DI SINI: Append data options yang bertipe string JSON agar dibaca backend server action
     serverFormData.append("options", JSON.stringify(formData.options)); 
+
+    // 🌟 2. KUNCINYA DI SINI: Pasang append baru untuk dikirim ke action backend server
+    serverFormData.append("is_affiliate", String(formData.is_affiliate));
+    serverFormData.append("affiliate_commission_rate", formData.affiliate_commission_rate !== null ? String(formData.affiliate_commission_rate) : "");
 
     try {
       const result = await createProductAction(serverFormData);
@@ -145,7 +157,7 @@ export default function AddProductPage() {
 
   return (
     <div className="w-full mx-auto py-8">
-      {/* Step Indicator (Progress Bar) */}
+      {/* Step Indicator */}
       <div className="flex items-center justify-center mb-8">
         <div className={`flex items-center justify-center w-8 h-8 rounded-full font-bold ${step >= 1 ? "bg-[#00a896] text-white" : "bg-gray-200"}`}>
           {step > 1 ? <Check className="w-5 h-5" /> : "1"}
@@ -156,7 +168,6 @@ export default function AddProductPage() {
         </div>
       </div>
 
-      {/* Render Komponen Berdasarkan Step */}
       <div className="bg-white p-6 shadow-sm border border-gray-100 rounded-sm relative">
         {loading && (
           <div className="absolute inset-0 bg-white/70 flex items-center justify-center z-50 font-bold text-slate-700 text-xs">
