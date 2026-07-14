@@ -83,7 +83,7 @@ export default function AddToCartSuccessModal({
                 View Cart
               </Link>
               <Link 
-                href="/checkout"
+                href="/cart/checkout"
                 className="w-full h-10 bg-white hover:bg-gray-50 border border-slate-300 text-gray-700 font-bold text-xs rounded-xs flex items-center justify-center transition-all shadow-3xs"
               >
                 Checkout
