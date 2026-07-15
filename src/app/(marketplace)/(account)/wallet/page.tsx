@@ -15,9 +15,11 @@ export default async function WalletRootPage() {
 
   const { data: profile } = await supabase.from("profiles").select("role").eq("id", session.user.id).single();
 
+  // 🌟 JIKA PENJUAL: Lempar ke halaman Pendapatan Toko utama
   if (profile?.role === "admin" || profile?.role === "vendor") {
-    redirect("/wallet/set-payout");
+    redirect("/wallet/earnings");
   } else {
-    redirect("/wallet/referral");
+    // 🌟 JIKA PEMBELI BIASA: Lempar ke riwayat Deposit/Top-Up uang mereka
+    redirect("/wallet/deposits");
   }
 }

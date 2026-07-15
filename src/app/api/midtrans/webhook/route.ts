@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
-// Menggunakan service role key karena webhook membutuhkan bypass RLS untuk update wallet & order
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY! 
@@ -9,76 +8,137 @@ const supabaseAdmin = createClient(
 
 export async function POST(request: Request) {
   try {
-    // 1. Ambil teks body terlebih dahulu untuk menghindari crash pembacaan JSON kosong
     const textBody = await request.text();
-    
-    // Jika body kosong (fitur PING/Test manual), langsung bypass sukses
-    if (!textBody) {
-      return NextResponse.json({ status: "OK", message: "Ping received successfully" });
-    }
+    if (!textBody) return NextResponse.json({ status: "OK" });
 
     const body = JSON.parse(textBody);
     const { order_id, transaction_status, fraud_status } = body;
 
-    // 2. CEGAT DUMMY DATA / BOT TESTING MIDTRANS AGAR TIDAK BIKIN DATABASE CRASH (500)
     if (!order_id || !transaction_status || order_id.startsWith("payment_notif_test")) {
-      return NextResponse.json({ status: "OK", message: "Midtrans test webhook bypassed successfully" });
+      return NextResponse.json({ status: "OK" });
     }
 
-    // 3. Jalankan logika bisnis hanya jika statusnya settlement atau capture accept
-    if (transaction_status === "settlement" || (transaction_status === "capture" && fraud_status === "accept")) {
-      
-      // Update Status Order menjadi 'processing'
-      const { data: orderData, error: orderError } = await supabaseAdmin
-        .from("orders")
-        .update({ status: "processing" })
-        .eq("invoice_number", order_id)
-        .select()
-        .single();
+    const isSettled = transaction_status === "settlement" || (transaction_status === "capture" && fraud_status === "accept");
 
-      if (orderError || !orderData) throw new Error("Order not found");
+    if (isSettled) {
+      // =========================================================================
+      // A. JIKA TRANSAKSI ADALAH TOP-UP WALLET FUNDS (INV: DEP-XXXX)
+      // =========================================================================
+      if (order_id.startsWith("DEP-")) {
+        // Ekstrak metadata custom dari order_id atau cari log deposit pending jika ada.
+        // Di sini kita ambil data user id yang diletakkan di metadata pembayaran midtrans, 
+        // atau kita selipkan userId di dalam manifest order_id. 
+        // Agar aman, mari pecah order_id: DEP-[TIMESTAMP]-[USERID_PART]
+        // Alternatif terbaik: Midtrans melemparkan custom_field jika kita set di route generator.
+        
+        const userId = body.custom_field1; // Kita akan set custom_field1 berisi user_id di API route generator nanti.
+        const usdAmount = Number(body.custom_field2); // custom_field2 berisi nominal USD murni sebelum dikali 15rb.
 
-      // Ambil semua item di dalam order untuk identifikasi Vendor & kalkulasi Wallet penjual
-      const { data: items, error: itemsError } = await supabaseAdmin
-        .from("order_items")
-        .select("vendor_id, price, quantity, shipping_fee_vendor")
-        .eq("order_id", orderData.id);
-
-      if (!itemsError && items) {
-        // Distribusikan dana ke masing-masing dompet/wallet penjual (Harga Barang + Ongkir Toko)
-        for (const item of items) {
-          const totalEarningsUsd = (Number(item.price) * item.quantity) + Number(item.shipping_fee_vendor);
-          
-          // Ambil saldo wallet lama penjual
-          const { data: wallet } = await supabaseAdmin
+        if (userId && usdAmount) {
+          // 1. Ambil atau buat data dompet user
+          let { data: wallet } = await supabaseAdmin
             .from("user_wallets")
-            .select("balance")
-            .eq("user_id", item.vendor_id)
+            .select("id, balance")
+            .eq("user_id", userId)
             .maybeSingle();
 
-          const currentBalance = wallet ? Number(wallet.balance) : 0;
+          if (!wallet) {
+            const { data: newWallet } = await supabaseAdmin
+              .from("user_wallets")
+              .insert({ user_id: userId, balance: 0.00 })
+              .select()
+              .single();
+            wallet = newWallet;
+          }
 
+          const currentBalance = wallet ? Number(wallet.balance) : 0;
+          const updatedBalance = currentBalance + usdAmount;
+
+          // 2. Update saldo dompet di tabel user_wallets
           await supabaseAdmin
             .from("user_wallets")
-            .upsert({
-              user_id: item.vendor_id,
-              balance: currentBalance + totalEarningsUsd,
-              updated_at: new Date().toISOString()
-            }, { onConflict: "user_id" });
+            .update({ balance: updatedBalance, updated_at: new Date().toISOString() })
+            .eq("id", wallet?.id);
+
+          // 3. Catat transaksi riwayat uang masuk ke wallet_transactions
+          await supabaseAdmin
+            .from("wallet_transactions")
+            .insert({
+              wallet_id: wallet?.id,
+              type: "deposits",
+              amount: usdAmount,
+              description: `Top up wallet via Midtrans Gateway ($${usdAmount.toFixed(2)})`,
+              payment_reference_id: order_id,
+              status: "completed"
+            });
+        }
+      } 
+      
+      // =========================================================================
+      // B. JIKA TRANSAKSI ADALAH BELANJA PRODUK BIASA (INV: INV-XXXX)
+      // =========================================================================
+      else if (order_id.startsWith("INV-")) {
+        const { data: orderData } = await supabaseAdmin
+          .from("orders")
+          .update({ status: "processing" })
+          .eq("invoice_number", order_id)
+          .select()
+          .single();
+
+        if (orderData) {
+          const { data: items } = await supabaseAdmin
+            .from("order_items")
+            .select("vendor_id, price, quantity, shipping_fee_vendor")
+            .eq("order_id", orderData.id);
+
+          if (items) {
+            for (const item of items) {
+              const totalEarningsUsd = (Number(item.price) * item.quantity) + Number(item.shipping_fee_vendor);
+              
+              let { data: vendorWallet } = await supabaseAdmin
+                .from("user_wallets")
+                .select("id, balance")
+                .eq("user_id", item.vendor_id)
+                .maybeSingle();
+
+              if (!vendorWallet) {
+                const { data: newW } = await supabaseAdmin
+                  .from("user_wallets")
+                  .insert({ user_id: item.vendor_id, balance: 0.00 })
+                  .select()
+                  .single();
+                vendorWallet = newW;
+              }
+
+              const currentBal = Number(vendorWallet?.balance);
+              
+              // Tambah saldo vendor
+              await supabaseAdmin
+                .from("user_wallets")
+                .update({ balance: currentBal + totalEarningsUsd, updated_at: new Date().toISOString() })
+                .eq("id", vendorWallet?.id);
+
+              // Catat riwayat log earnings vendor
+              await supabaseAdmin
+                .from("wallet_transactions")
+                .insert({
+                  wallet_id: vendorWallet?.id,
+                  type: "earnings",
+                  amount: totalEarningsUsd,
+                  description: `Earnings from order #${order_id}`,
+                  status: "completed"
+                });
+            }
+          }
+
+          await supabaseAdmin.from("carts").delete().eq("user_id", orderData.buyer_id);
         }
       }
-
-      // Bersihkan/Hapus isi keranjang pembeli karena transaksi sukses
-      await supabaseAdmin
-        .from("carts")
-        .delete()
-        .eq("user_id", orderData.buyer_id);
     }
 
     return NextResponse.json({ status: "OK" });
   } catch (error: any) {
     console.error("Webhook Error:", error.message);
-    // Mengembalikan objek error terstruktur agar lebih mudah dilacak di Vercel/Terminal Logs
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
