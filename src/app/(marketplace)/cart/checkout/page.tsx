@@ -25,6 +25,7 @@ interface CartItem {
     state: string;
     city: string;
     user_id: string;
+    affiliate_commission_rate: number | null;
     profiles: {
       first_name: string;
       last_name: string;
@@ -346,9 +347,11 @@ export default function CheckoutPage() {
                 
               if (aff) {
                 affiliateData = aff;
+
+                const productCommissionRate = Number(item.products.affiliate_commission_rate || 0);
                 // Flat komisi 10% dari harga dasar produk
-                commissionAmount = (finalPrice * item.quantity) * 0.10;
-              }
+                commissionAmount = (finalPrice * item.quantity) * (productCommissionRate / 100); 
+               }
             }
 
             // Pendapatan bersih toko dikurangi komisi affiliate makelar

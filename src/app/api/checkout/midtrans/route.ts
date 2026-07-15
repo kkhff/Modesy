@@ -30,7 +30,7 @@ export async function POST(request: Request) {
 
     const body = await request.json().catch(() => null);
     
-    // 🌟 VALIDASI YANG DIPERBAIKI: Mengizinkan shippingCost bernilai 0 (gratis ongkir)
+    // VALIDASI PAYLOAD: Mengizinkan shippingCost bernilai 0 (gratis ongkir)
     if (
       !body || 
       !body.items || 
@@ -100,7 +100,6 @@ export async function POST(request: Request) {
     estimatedCompleteDate.setDate(estimatedCompleteDate.getDate() + maxDaysEstimation);
 
     // 4. SIMPAN DATA TRANSAKSI KE TABEL ORDERS (Status Awal: pending)
-    // 🌟 KUNCI: Titipkan affiliate_code ke dalam order jika ada, atau lewat webhook field nantinya
     const { data: newOrder, error: insertError } = await supabase
       .from("orders")
       .insert({
