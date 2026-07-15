@@ -7,7 +7,7 @@ import toast from "react-hot-toast";
 import Swal from "sweetalert2";
 import { createClient } from "@/lib/supabase/client";
 
-// Import Server Actions & Modal Alamat Bawaan Lu
+// Import Server Actions & Modal Alamat
 import { getAddressesRoute, saveAddressRoute, deleteAddressRoute } from "../../(account)/settings/shipping-address/action";
 import AddressModal from "@/components/modals/AddressModal";
 
@@ -55,6 +55,14 @@ export default function CheckoutPage() {
 
   const supabase = createClient();
 
+  // Helper membaca cookie di browser client
+  const getCookie = (name: string) => {
+    const value = `; ${document.cookie}`;
+    const parts = value.split(`; ${name}=`);
+    if (parts.length === 2) return parts.pop()?.split(';').shift();
+    return null;
+  };
+
   // 1. Ambil Data Alamat dari Supabase
   const fetchAddresses = async (selectNewest = false) => {
     const res = await getAddressesRoute();
@@ -70,7 +78,7 @@ export default function CheckoutPage() {
     }
   };
 
-  // 2. Fetch Awal Data Paralel (Cart, Address, Wallet Balance Asli)
+  // 2. Fetch Awal Data Paralel (Cart, Address, Wallet Balance)
   useEffect(() => {
     const fetchCheckoutData = async () => {
       try {
@@ -82,7 +90,6 @@ export default function CheckoutPage() {
 
         await fetchAddresses();
 
-        // Ambil Data Keranjang Belanja
         const { data: cartData } = await supabase
           .from("carts")
           .select("id, quantity, products(*, profiles(first_name, last_name))")
@@ -90,7 +97,6 @@ export default function CheckoutPage() {
 
         if (cartData) setCartItems(cartData as any);
 
-        // Ambil Saldo Wallet Asli dari user_wallets Koneksi Profile Lu
         const { data: walletData } = await supabase
           .from("user_wallets")
           .select("balance")
@@ -109,14 +115,11 @@ export default function CheckoutPage() {
     fetchCheckoutData();
   }, []);
 
-  // =========================================================================
-  // MANAJEMEN CRUD ADDRESS IN-PLACE CHECKOUT
-  // =========================================================================
+  // CRUD Address Handlers
   const handleSaveAddress = async (formData: any) => {
     setSavingAddress(true);
     const res = await saveAddressRoute(formData);
     setSavingAddress(false);
-
     if (res.success) {
       toast.success(formData.id ? "Address updated!" : "Address added successfully!");
       setIsModalOpen(false);
@@ -162,7 +165,6 @@ export default function CheckoutPage() {
         const loadingToast = toast.loading("Deleting address...");
         const res = await deleteAddressRoute(id);
         toast.dismiss(loadingToast);
-
         if (res.success) {
           Swal.fire({
             title: "Deleted!",
@@ -180,9 +182,7 @@ export default function CheckoutPage() {
     });
   };
 
-  // =========================================================================
-  // MULTI VENDOR GROUPING & KALKULATOR TARIF SHIPPNG BERJENJANG
-  // =========================================================================
+  // Grouping Multi Vendor & Kurir
   const vendorGroups = useMemo(() => {
     const groups: Record<string, { vendorName: string; country: string; items: CartItem[] }> = {};
     cartItems.forEach((item) => {
@@ -202,14 +202,11 @@ export default function CheckoutPage() {
 
   useEffect(() => {
     if (!activeAddress || Object.keys(vendorGroups).length === 0) return;
-    
     const defaults: Record<string, { name: string; cost: number }> = {};
-    
     Object.entries(vendorGroups).forEach(([vendorId, vendor]) => {
       const buyerCountry = (activeAddress.country || "").toLowerCase().trim();
       const buyerState = (activeAddress.state || "").toLowerCase().trim();
       const buyerCity = (activeAddress.city || "").toLowerCase().trim();
-
       const vendorCountry = (vendor.country || "").toLowerCase().trim();
       const sampleProduct = vendor.items[0]?.products;
       const vendorState = (sampleProduct?.state || "").toLowerCase().trim();
@@ -218,7 +215,6 @@ export default function CheckoutPage() {
       if (buyerCountry === vendorCountry) {
         let deliveryCost = 8.0; 
         let deliveryLabel = "Flat Rate (Inter-Provincial)";
-
         if (buyerCity === vendorCity) {
           deliveryCost = 2.0; 
           deliveryLabel = "Local Delivery (Same City)";
@@ -231,7 +227,6 @@ export default function CheckoutPage() {
         defaults[vendorId] = { name: "Flat Rate (International Cargo)", cost: 20.0 };
       }
     });
-    
     setSelectedShippingMethods(defaults);
   }, [activeAddress, vendorGroups]);
 
@@ -242,12 +237,10 @@ export default function CheckoutPage() {
       const finalPrice = p.discounted_price !== null ? Number(p.discounted_price) : Number(p.price);
       subtotal += finalPrice * item.quantity;
     });
-
     let shippingCost = 0;
     Object.values(selectedShippingMethods).forEach((ship) => {
       shippingCost += ship.cost;
     });
-
     return { subtotal, shippingCost, total: subtotal + shippingCost };
   }, [cartItems, selectedShippingMethods]);
 
@@ -264,58 +257,236 @@ export default function CheckoutPage() {
       return;
     }
 
-    // 🅰️ PILIHAN PEMBAYARAN: PLATFORM WALLET BALANCE
+    const affiliateCode = getCookie("modesy_affiliate_ref");
+
+    // 🅰️ METODE PEMBAYARAN: WALLET BALANCE
     if (selectedPaymentMethod === "wallet") {
       if (walletBalance < totals.total) {
         toast.error("Your wallet balance is insufficient.");
         return;
       }
 
-      const loadingToast = toast.loading("Processing balance deduction...");
-      try {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (!session?.user) throw new Error("Session expired.");
+      // Cegat pake Swal biar ga takut ketekan salah pencet
+      Swal.fire({
+        title: "Confirm Wallet Payment?",
+        text: `Your balance will be deducted by $${totals.total.toFixed(2)} USD to pay for this order.`,
+        icon: "warning",
+        showCancelButton: true,
+        confirmButtonColor: "#00a896",
+        cancelButtonColor: "#64748b",
+        confirmButtonText: "Yes, Pay Now!",
+        cancelButtonText: "Cancel",
+        customClass: { popup: "rounded-sm text-sm font-sans" }
+      }).then(async (result) => {
+        if (!result.isConfirmed) return;
 
-        const newBalance = walletBalance - totals.total;
-        const { error: walletError } = await supabase
-          .from("user_wallets")
-          .update({ balance: newBalance, updated_at: new Date().toISOString() })
-          .eq("user_id", session.user.id);
+        const loadingToast = toast.loading("Processing wallet payment...");
+        try {
+          const { data: { session } } = await supabase.auth.getSession();
+          if (!session?.user) throw new Error("Session expired. Please login again.");
 
-        if (walletError) throw walletError;
+          // 1. Potong Saldo Dompet Pembeli
+          const newBalance = walletBalance - totals.total;
+          const { error: walletError } = await supabase
+            .from("user_wallets")
+            .update({ balance: newBalance, updated_at: new Date().toISOString() })
+            .eq("user_id", session.user.id);
 
-        setWalletBalance(newBalance);
-        toast.dismiss(loadingToast);
-        toast.success("Purchase successful! Paid using Wallet Balance.");
-        setActiveStep(1);
-      } catch (err: any) {
-        toast.dismiss(loadingToast);
-        toast.error("Failed to process wallet payment.");
-      }
+          if (walletError) throw walletError;
+
+          // 2. Buat Nomor Invoice Unik
+          const orderId = `INV-${Date.now()}-${Math.random().toString(36).substring(2, 5).toUpperCase()}`;
+
+          // 3. Simpan Data Transaksi ke Tabel orders (Langsung 'processing')
+          const { data: newOrder, error: orderError } = await supabase
+            .from("orders")
+            .insert({
+              invoice_number: orderId,
+              buyer_id: session.user.id,
+              address_id: selectedAddressId,
+              total_amount: Number(totals.total),
+              shipping_cost: Number(totals.shippingCost),
+              payment_method: "wallet",
+              status: "processing",
+              estimated_complete_at: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString()
+            })
+            .select()
+            .single();
+
+          if (orderError || !newOrder) throw orderError || new Error("Failed to create order record.");
+
+          // 4. Loop Items untuk Vendor Earnings & Cabang Distribusi Komisi Makelar
+          for (const item of cartItems) {
+            const finalPrice = item.products.discounted_price !== null ? Number(item.products.discounted_price) : Number(item.products.price);
+            const vendorId = item.products.user_id;
+            const vendorShipCost = selectedShippingMethods[vendorId]?.cost || 0;
+            
+            // Masukkan record barang terjual ke order_items
+            await supabase.from("order_items").insert({
+              order_id: newOrder.id,
+              product_id: item.products.id,
+              vendor_id: vendorId,
+              quantity: item.quantity,
+              price: finalPrice,
+              shipping_fee_vendor: Number(vendorShipCost)
+            });
+
+            // 🌟 HITUNG HAK CIPRATAN MAKELAR (AFFILIATE)
+            let affiliateData = null;
+            let commissionAmount = 0;
+
+            if (affiliateCode) {
+              const { data: aff } = await supabase
+                .from("product_affiliates")
+                .select("id, user_id")
+                .eq("affiliate_code", affiliateCode)
+                .eq("product_id", item.products.id)
+                .eq("status", true)
+                .maybeSingle();
+                
+              if (aff) {
+                affiliateData = aff;
+                // Flat komisi 10% dari harga dasar produk
+                commissionAmount = (finalPrice * item.quantity) * 0.10;
+              }
+            }
+
+            // Pendapatan bersih toko dikurangi komisi affiliate makelar
+            const totalItemEarnings = (finalPrice * item.quantity) + Number(vendorShipCost);
+            const vendorNetEarnings = totalItemEarnings - commissionAmount;
+
+            // A. Kirim Uang Ke Wallet Vendor
+            const { data: vendorWallet } = await supabase.from("user_wallets").select("id, balance").eq("user_id", vendorId).maybeSingle();
+            let targetVendorWalletId = vendorWallet?.id;
+            let currentVendorBalance = vendorWallet ? Number(vendorWallet.balance) : 0;
+
+            if (!vendorWallet) {
+              const { data: newW } = await supabase.from("user_wallets").insert({ user_id: vendorId, balance: 0.00 }).select().single();
+              if (newW) {
+                targetVendorWalletId = newW.id;
+                currentVendorBalance = 0;
+              }
+            }
+
+            if (targetVendorWalletId) {
+              await supabase
+                .from("user_wallets")
+                .update({ balance: currentVendorBalance + vendorNetEarnings, updated_at: new Date().toISOString() })
+                .eq("id", targetVendorWalletId);
+
+              await supabase.from("wallet_transactions").insert({
+                wallet_id: targetVendorWalletId,
+                type: "earnings",
+                amount: vendorNetEarnings,
+                description: `Earnings from order #${orderId} ${commissionAmount > 0 ? '(Deducted by affiliate commission)' : ''}`,
+                status: "completed"
+              });
+            }
+
+            // B. Kirim Uang Ke Wallet Makelar Afiliasi (Jika Valid)
+            if (affiliateData && commissionAmount > 0) {
+              // Catat log internal affiliate_earnings
+              await supabase.from("affiliate_earnings").insert({
+                affiliate_id: affiliateData.id,
+                order_id: newOrder.id, 
+                buyer_id: session.user.id,
+                commission_amount: commissionAmount,
+                payout_status: "approved"
+              });
+
+              // Naikkan counter total sales promotor
+              const { data: currentAffRecord } = await supabase.from("product_affiliates").select("total_sales").eq("id", affiliateData.id).single();
+              await supabase
+                .from("product_affiliates")
+                .update({ total_sales: (currentAffRecord?.total_sales || 0) + 1 })
+                .eq("id", affiliateData.id);
+
+              // Masukkan duit ke balance makelar
+              const { data: affWallet } = await supabase.from("user_wallets").select("id, balance").eq("user_id", affiliateData.user_id).maybeSingle();
+              let targetAffWalletId = affWallet?.id;
+              let currentAffBalance = affWallet ? Number(affWallet.balance) : 0;
+
+              if (!affWallet) {
+                const { data: newW } = await supabase.from("user_wallets").insert({ user_id: affiliateData.user_id, balance: 0.00 }).select().single();
+                if (newW) {
+                  targetAffWalletId = newW.id;
+                  currentAffBalance = 0;
+                }
+              }
+
+              if (targetAffWalletId) {
+                await supabase.from("user_wallets").update({ balance: currentAffBalance + commissionAmount, updated_at: new Date().toISOString() }).eq("id", targetAffWalletId);
+                await supabase.from("wallet_transactions").insert({
+                  wallet_id: targetAffWalletId,
+                  type: "referral",
+                  amount: commissionAmount,
+                  description: `Referral commission from product ${item.products.title.substring(0, 30)} (Order #${orderId})`,
+                  status: "completed"
+                });
+              }
+            }
+          }
+
+          // 5. Catat log keluar 'expenses' untuk Pembeli
+          const { data: buyerWalletInfo } = await supabase.from("user_wallets").select("id").eq("user_id", session.user.id).single();
+          if (buyerWalletInfo) {
+            await supabase.from("wallet_transactions").insert({
+              wallet_id: buyerWalletInfo.id,
+              type: "expenses",
+              amount: totals.total,
+              description: `Purchased items using wallet balance (Invoice #${orderId})`,
+              status: "completed"
+            });
+          }
+
+          // 6. Bersihkan Isi Keranjang Belanja Pembeli
+          await supabase.from("carts").delete().eq("user_id", session.user.id);
+
+          setWalletBalance(newBalance);
+          setCartItems([]);
+          toast.dismiss(loadingToast);
+          
+          Swal.fire({
+            title: "Purchase Successful!",
+            text: `Order #${orderId} has been successfully paid using your wallet balance.`,
+            icon: "success",
+            confirmButtonColor: "#00a896",
+            customClass: { popup: "rounded-sm text-sm font-sans" }
+          }).then(() => {
+            window.location.href = "/orders"; 
+          });
+
+        } catch (err: any) {
+          toast.dismiss(loadingToast);
+          console.error("Wallet checkout crash log:", err);
+          toast.error(err.message || "Failed to finalize wallet payment transaction.");
+        }
+      });
     } 
     
-    // 🅱️ PILIHAN PEMBAYARAN: SECURE MIDTRANS SNAP POPUP (MENGGUNAKAN SDK)
+    // 🅱️ METODE PEMBAYARAN: SECURE MIDTRANS SNAP
     else if (selectedPaymentMethod === "midtrans") {
       const loadingToast = toast.loading("Connecting to Midtrans gateway...");
-
       try {
         const res = await fetch("/api/checkout/midtrans", {
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({ 
-    amount: totals.total, // Total keseluruhan
-    shippingCost: totals.shippingCost, // 👈 Kunci 1: HARUS ADA
-    shippingMethods: selectedShippingMethods,
-    addressId: selectedAddressId,
-    items: cartItems.map(item => ({ // 👈 Kunci 2: HARUS ADA
-      id: item.products.id,
-      title: item.products.title,
-      price: item.products.discounted_price !== null ? item.products.discounted_price : item.products.price,
-      quantity: item.quantity,
-      vendor_id: item.products.user_id // Tambahkan vendor_id agar aman buat order_items
-    }))
-  })
-});
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ 
+            amount: totals.total,
+            shippingCost: totals.shippingCost,
+            shippingMethods: selectedShippingMethods,
+            addressId: selectedAddressId,
+            affiliateCode: affiliateCode, 
+            items: cartItems.map(item => ({
+              id: item.products.id,
+              title: item.products.title,
+              price: item.products.discounted_price !== null ? item.products.discounted_price : item.products.price,
+              quantity: item.quantity,
+              vendor_id: item.products.user_id
+            }))
+          })
+        });
+        
         const data = await res.json();
         toast.dismiss(loadingToast);
 
@@ -323,15 +494,17 @@ export default function CheckoutPage() {
 
         if ((window as any).snap) {
           (window as any).snap.pay(data.token, {
-            onSuccess: function (result: any) {
+            onSuccess: function () {
               toast.success("Payment completed successfully!");
+              window.location.href = "/orders";
             },
-            onPending: function (result: any) {
+            onPending: function () {
               toast.custom(() => (
                 <div className="bg-amber-50 border border-amber-200 p-3 rounded-xs text-amber-800 text-xs font-medium shadow-sm">
-                  Waiting for settlement. Please complete payment inside your app!
+                  Waiting for settlement inside app!
                 </div>
               ));
+              window.location.href = "/orders";
             },
             onError: function () {
               toast.error("Payment transmission rejected!");
@@ -359,7 +532,7 @@ export default function CheckoutPage() {
     <div className="max-w-[1250px] mx-auto px-4 py-8 font-sans text-xs text-slate-600 antialiased">
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
         
-        {/* LEFT COLUMN: ACCORDION BODY */}
+        {/* LEFT COLUMN */}
         <div className="lg:col-span-8 space-y-4">
           
           {/* STEP 1: SHIPPING INFORMATION */}
@@ -409,7 +582,6 @@ export default function CheckoutPage() {
                   )}
                 </div>
 
-                {/* Dinamika Penentuan Kurir Split Toko */}
                 {selectedAddressId && Object.keys(vendorGroups).length > 0 && (
                   <div className="space-y-4 pt-4 border-t border-gray-100">
                     <span className="font-bold text-slate-700 block">Shipping Method</span>
@@ -474,11 +646,7 @@ export default function CheckoutPage() {
                 )}
 
                 <div className="flex justify-end pt-2">
-                  <button 
-                    type="button" 
-                    onClick={() => selectedAddressId && setActiveStep(2)} 
-                    className="h-10 px-6 bg-[#00a896] hover:bg-[#009282] text-white font-bold rounded-xs flex items-center gap-1 cursor-pointer"
-                  >
+                  <button type="button" onClick={() => selectedAddressId && setActiveStep(2)} className="h-10 px-6 bg-[#00a896] hover:bg-[#009282] text-white font-bold rounded-xs flex items-center gap-1 cursor-pointer">
                     Continue to Payment Method <ChevronRight className="w-4 h-4" />
                   </button>
                 </div>

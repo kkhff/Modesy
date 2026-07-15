@@ -10,9 +10,6 @@ async function getProductDetail(slug: string) {
     { cookies: { get(name: string) { return cookieStore.get(name)?.value; } } }
   );
 
-  
-
-  // 🌟 SEKARANG SUDAH MAJU: Ambil data produk utama, relation vendor, brand, dan review asli beserta data pembuat review
   const { data: product, error: productError } = await supabase
     .from("products")
     .select(`
@@ -21,20 +18,21 @@ async function getProductDetail(slug: string) {
       brands(name),
       wishlists(count),
       product_reviews(
-  id,
-  user_id, 
-  rating, 
-  review_text, 
-  created_at, 
-  profiles(first_name, last_name, avatar_url)
-), product_comments(
-      id,
-      parent_id,
-      comment_text,
-      user_id,
-      created_at,
-      profiles(first_name, last_name)
-    )
+        id,
+        user_id, 
+        rating, 
+        review_text, 
+        created_at, 
+        profiles(first_name, last_name, avatar_url)
+      ), 
+      product_comments(
+        id,
+        parent_id,
+        comment_text,
+        user_id,
+        created_at,
+        profiles(first_name, last_name)
+      )
     `)
     .eq("slug", slug)
     .maybeSingle(); 
@@ -45,7 +43,6 @@ async function getProductDetail(slug: string) {
 
   if (!product) return null;
 
-  // Ambil semua variasi pasangannya yang aktif
   const { data: variations, error: varError } = await supabase
     .from("product_variations")
     .select("*")
@@ -62,7 +59,6 @@ async function getProductDetail(slug: string) {
   };
 }
 
-// Fungsi pembantu untuk mengambil data profil pembeli yang sedang login saat ini
 async function getCurrentUserProfile() {
   const cookieStore = await cookies();
   const supabase = createServerClient(
@@ -83,10 +79,19 @@ async function getCurrentUserProfile() {
   return profile;
 }
 
-export default async function ProductDetailPage({ params }: { params: Promise<{ slug: string }> }) {
+export default async function ProductDetailPage({ 
+  params,
+  searchParams 
+}: { 
+  params: Promise<{ slug: string }>;
+  searchParams: Promise<{ ref?: string }>; 
+}) {
   const resolvedParams = await params;
+  const resolvedSearchParams = await searchParams;
   
-  // Ambil data produk dan profile pembeli secara paralel biar loading kilat
+  // Tangkap nilai ref (jika ada) untuk dilempar ke client-side wrapper
+  const affiliateRef = resolvedSearchParams.ref || null;
+
   const [product, currentUserProfile] = await Promise.all([
     getProductDetail(resolvedParams.slug),
     getCurrentUserProfile()
@@ -105,6 +110,7 @@ export default async function ProductDetailPage({ params }: { params: Promise<{ 
     <ProductDetailClient 
       product={product} 
       currentUserProfile={currentUserProfile} 
+      affiliateRef={affiliateRef} // 🌟 Kirim parameter ref ke client component
     />
   );
 }

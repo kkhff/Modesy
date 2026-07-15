@@ -8,6 +8,12 @@ import AddReviewModal from "@/components/modals/AddReviewModal"; // Import modal
 import AddToCartSuccessModal from "@/components/modals/AddToCartSuccessModal"; // Import modal ringkasan keranjang baru
 import AskQuestionModal from "@/components/modals/AskQuestionModal";
 
+interface ProductDetailClientProps {
+  product: any;
+  currentUserProfile: any;
+  affiliateRef?: string | null; // 🌟 Tambahkan baris ini
+}
+
 const socialIcons = [
   { 
     name: "facebook", 
@@ -26,7 +32,11 @@ const socialIcons = [
   }
 ];
 
-export default function ProductDetailClient({ product, currentUserProfile }: { product: any; currentUserProfile?: any }) {
+export default function ProductDetailClient({ 
+  product, 
+  currentUserProfile,
+  affiliateRef 
+}: ProductDetailClientProps) {
   const price = Number(product.price) || 0;
   const discountedPrice = product.discounted_price !== null ? Number(product.discounted_price) : null;
   const hasDiscount = product.discount_rate > 0 || (discountedPrice !== null && discountedPrice < price);
@@ -59,6 +69,15 @@ const userExistingReview = useMemo(() => {
   // --- 🌟 STATE KONTROL WISHLIST LIVE DI CLIENT ---
   const [isWished, setIsWished] = useState(false);
   const [wishlistCount, setWishlistCount] = useState(Number(product.wishlists?.[0]?.count) || 0);
+
+  useEffect(() => {
+    if (affiliateRef) {
+      // Simpan cookie secara manual dengan masa aktif 7 hari
+      const maxAge = 7 * 24 * 60 * 60; // 7 hari dalam detik
+      document.cookie = `modesy_affiliate_ref=${affiliateRef}; max-age=${maxAge}; path=/; SameSite=Lax`;
+      console.log("Affiliate code captured and locked:", affiliateRef);
+    }
+  }, [affiliateRef]);
 
   // Cek apakah akun yang sedang login saat ini sudah menandai wishlist pada produk ini
   useEffect(() => {

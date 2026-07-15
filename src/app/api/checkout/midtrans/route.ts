@@ -29,11 +29,20 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json().catch(() => null);
-    if (!body || !body.items || !body.shippingCost || !body.addressId || !body.shippingMethods) {
+    
+    // 🌟 VALIDASI YANG DIPERBAIKI: Mengizinkan shippingCost bernilai 0 (gratis ongkir)
+    if (
+      !body || 
+      !body.items || 
+      body.shippingCost === undefined || 
+      !body.addressId || 
+      !body.shippingMethods || 
+      !body.amount
+    ) {
       return NextResponse.json({ error: "Missing required checkout payloads." }, { status: 400 });
     }
 
-    const { items, shippingCost, addressId, shippingMethods, amount } = body;
+    const { items, shippingCost, addressId, shippingMethods, amount, affiliateCode } = body;
 
     // Ambil key langsung dari variabel env
     const serverKey = process.env.MIDTRANS_SERVER_KEY?.trim();
@@ -52,17 +61,15 @@ export async function POST(request: Request) {
 
     const orderId = `INV-${Date.now()}-${Math.random().toString(36).substring(2, 5).toUpperCase()}`;
 
-    // 🌟 3. KALKULASI ESTIMASI HARI AUTO-COMPLETE BERDASARKAN JARAK (SERVER-SIDE)
-    let maxDaysEstimation = 2; // Default base minimum days
+    // 3. KALKULASI ESTIMASI HARI AUTO-COMPLETE BERDASARKAN JARAK (SERVER-SIDE)
+    let maxDaysEstimation = 2;
 
-    // Ambil profile pembeli saat ini untuk pencocokan wilayah
     const { data: buyerProfile } = await supabase
       .from("profiles")
       .select("country, state_or_province, city")
       .eq("id", session.user.id)
       .maybeSingle();
 
-    // Loop items untuk mencari durasi estimasi terlama dari produk yang dibeli
     for (const item of items) {
       const baseDaysStr = item.delivery_time || "2-3";
       const baseMin = Number(baseDaysStr.split("-")[0]) || 2;
@@ -89,17 +96,17 @@ export async function POST(request: Request) {
       }
     }
 
-    // Hitung tanggal riil auto-complete (Hari ini + maxDaysEstimation)
     const estimatedCompleteDate = new Date();
     estimatedCompleteDate.setDate(estimatedCompleteDate.getDate() + maxDaysEstimation);
 
-    // 🌟 4. SIMPAN DATA TRANSAKSI KE TABEL ORDERS (Status Awal: pending)
+    // 4. SIMPAN DATA TRANSAKSI KE TABEL ORDERS (Status Awal: pending)
+    // 🌟 KUNCI: Titipkan affiliate_code ke dalam order jika ada, atau lewat webhook field nantinya
     const { data: newOrder, error: insertError } = await supabase
       .from("orders")
       .insert({
         invoice_number: orderId,
         buyer_id: session.user.id,
-        address_id: addressId, // 👈 HAPUS BUNGKUSAN Number() DISINI, biarkan string UUID mentah
+        address_id: addressId, 
         total_amount: Number(amount),
         shipping_cost: Number(shippingCost),
         payment_method: "midtrans",
@@ -109,21 +116,21 @@ export async function POST(request: Request) {
       .select()
       .single();
 
-   if (insertError) {
+    if (insertError) {
       console.error("Failed to insert order:", insertError);
-      // ✅ UBAH INI: Kirim langsung detail pesan error dari Supabase ke client browser
       return NextResponse.json({ 
         success: false, 
-        error: `Supabase Order Error: ${insertError.message} (${insertError.code}) - Detail: ${insertError.details || 'none'}` 
+        error: `Supabase Order Error: ${insertError.message}` 
       }, { status: 400 });
     }
 
-    // 🌟 LOGIKA MAP ITEM DETAILS KE RUPIAH (KURS 15.000)
+    // 5. MAP ITEM DETAILS KE RUPIAH (KURS 15.000) & SIMPAN ORDER ITEMS
     let grossAmount = 0;
     const midtransItemDetails = [];
 
     for (const item of items) {
-      const priceInIdr = Math.round(Number(item.price) * 15000);
+      const finalPrice = Number(item.price);
+      const priceInIdr = Math.round(finalPrice * 15000);
       grossAmount += priceInIdr * item.quantity;
       
       midtransItemDetails.push({
@@ -133,16 +140,16 @@ export async function POST(request: Request) {
         name: item.title.substring(0, 50)
       });
 
-      // Simpan rincian barang per vendor ke tabel order_items
       const vendorId = item.vendor_id || item.user_id;
       const vendorShipCost = shippingMethods[vendorId]?.cost || 0;
 
+      // Catat relasi barang belanjaan ke order_items
       await supabase.from("order_items").insert({
         order_id: newOrder.id,
         product_id: item.id,
         vendor_id: vendorId,
         quantity: item.quantity,
-        price: Number(item.price),
+        price: finalPrice,
         shipping_fee_vendor: Number(vendorShipCost)
       });
     }
@@ -159,12 +166,11 @@ export async function POST(request: Request) {
       });
     }
 
-    // Pengecekan batas minimum transaksi mutlak Midtrans
     if (grossAmount < 10000) {
       return NextResponse.json({ error: "Minimum checkout amount is Rp 10.000" }, { status: 400 });
     }
 
-    // 5. Susun Parameter Payload Sesuai Standar SDK
+    // 6. Susun Parameter Payload Sesuai Standar SDK Midtrans
     const parameter = {
       transaction_details: {
         order_id: orderId,
@@ -177,10 +183,12 @@ export async function POST(request: Request) {
       customer_details: {
         first_name: session.user.user_metadata?.first_name || "Customer",
         email: session.user.email
-      }
+      },
+      // 🌟 KUNCI TRANSFER COOKIE: Selipkan affiliateCode ke custom_field Midtrans
+      // Supaya pas webhook settlement berbunyi, kita tahu pesanan Midtrans ini punya makelar siapa
+      custom_field1: affiliateCode || ""
     };
 
-    // 6. Minta Token Snap lewat SDK Resmi
     const transaction = await snap.createTransaction(parameter);
 
     return NextResponse.json({ 
