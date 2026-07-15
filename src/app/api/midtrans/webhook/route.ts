@@ -25,37 +25,40 @@ export async function POST(request: Request) {
       // A. JIKA TRANSAKSI ADALAH TOP-UP WALLET FUNDS (INV: DEP-XXXX)
       // =========================================================================
       if (order_id.startsWith("DEP-")) {
-        const userId = body.custom_field1; // custom_field1 berisi user_id di API route topup
-        const usdAmount = Number(body.custom_field2); // custom_field2 berisi nominal USD murni sebelum dikali 15rb
+        const userId = body.custom_field1; 
+        const usdAmount = Number(body.custom_field2); 
 
         if (userId && usdAmount) {
-          // 1. Ambil atau buat data dompet user
-          let { data: wallet } = await supabaseAdmin
+          let { data: wallet, error: walletFindError } = await supabaseAdmin
             .from("user_wallets")
             .select("id, balance")
             .eq("user_id", userId)
             .maybeSingle();
 
+          if (walletFindError) throw new Error(`[Find Wallet Error]: ${walletFindError.message}`);
+
           if (!wallet) {
-            const { data: newWallet } = await supabaseAdmin
+            const { data: newWallet, error: walletInsertError } = await supabaseAdmin
               .from("user_wallets")
               .insert({ user_id: userId, balance: 0.00 })
               .select()
               .single();
+            
+            if (walletInsertError) throw new Error(`[Create Wallet Error]: ${walletInsertError.message}`);
             wallet = newWallet;
           }
 
           const currentBalance = wallet ? Number(wallet.balance) : 0;
           const updatedBalance = currentBalance + usdAmount;
 
-          // 2. Update saldo dompet di tabel user_wallets
-          await supabaseAdmin
+          const { error: walletUpdateError } = await supabaseAdmin
             .from("user_wallets")
             .update({ balance: updatedBalance, updated_at: new Date().toISOString() })
             .eq("id", wallet?.id);
 
-          // 3. Catat transaksi riwayat uang masuk ke wallet_transactions
-          await supabaseAdmin
+          if (walletUpdateError) throw new Error(`[Update Balance Error]: ${walletUpdateError.message}`);
+
+          const { error: txInsertError } = await supabaseAdmin
             .from("wallet_transactions")
             .insert({
               wallet_id: wallet?.id,
@@ -63,8 +66,11 @@ export async function POST(request: Request) {
               amount: usdAmount,
               description: `Top up wallet via Midtrans Gateway ($${usdAmount.toFixed(2)})`,
               payment_reference_id: order_id,
+              order_id: null,
               status: "completed"
             });
+
+          if (txInsertError) throw new Error(`[Deposit History Error]: ${txInsertError.message}`);
         }
       } 
       
@@ -72,22 +78,24 @@ export async function POST(request: Request) {
       // B. JIKA TRANSAKSI ADALAH BELANJA PRODUK BIASA (INV: INV-XXXX)
       // =========================================================================
       else if (order_id.startsWith("INV-")) {
-        // Tangkap kode affiliate yang kita titipkan di custom_field1 route checkout midtrans
         const affiliateCode = body.custom_field1 || null;
 
-        const { data: orderData } = await supabaseAdmin
+        const { data: orderData, error: orderUpdateError } = await supabaseAdmin
           .from("orders")
           .update({ status: "processing" })
           .eq("invoice_number", order_id)
           .select()
           .single();
 
+        if (orderUpdateError) throw new Error(`[Update Order Status Error]: ${orderUpdateError.message}`);
+
         if (orderData) {
-          // Ambil item produk di order ini beserta rate komisi afiliasi aslinya dari tabel products
-          const { data: items } = await supabaseAdmin
+          const { data: items, error: itemsFetchError } = await supabaseAdmin
             .from("order_items")
             .select("*, products(id, title, affiliate_commission_rate)")
             .eq("order_id", orderData.id);
+
+          if (itemsFetchError) throw new Error(`[Fetch Order Items Error]: ${itemsFetchError.message}`);
 
           if (items) {
             for (const item of items) {
@@ -98,9 +106,8 @@ export async function POST(request: Request) {
               let affiliateData = null;
               let commissionAmount = 0;
 
-              // 1. HITUNG CIPRATAN AFFILIATE DINAMIS DARI RATE DB
               if (affiliateCode) {
-                const { data: aff } = await supabaseAdmin
+                const { data: aff, error: affFindError } = await supabaseAdmin
                   .from("product_affiliates")
                   .select("id, user_id")
                   .eq("affiliate_code", affiliateCode)
@@ -108,42 +115,47 @@ export async function POST(request: Request) {
                   .eq("status", true)
                   .maybeSingle();
 
+                if (affFindError) throw new Error(`[Find Affiliate Code Error]: ${affFindError.message}`);
+
                 if (aff) {
                   affiliateData = aff;
-                  // Ambil persentase asli dari kolom database produk, default ke 0 jika NULL
                   const productCommissionRate = Number((item.products as any)?.affiliate_commission_rate || 0);
                   commissionAmount = (finalPrice * item.quantity) * (productCommissionRate / 100);
                 }
               }
 
               const totalItemEarnings = (finalPrice * item.quantity) + vendorShipCost;
-              // Pendapatan bersih vendor dikurangi cipratan makelar
               const vendorNetEarnings = totalItemEarnings - commissionAmount;
               
-              // 2. DISTRIBUSI KELUAR KE WALLET VENDOR
-              let { data: vendorWallet } = await supabaseAdmin
+              let { data: vendorWallet, error: vendorWalletError } = await supabaseAdmin
                 .from("user_wallets")
                 .select("id, balance")
                 .eq("user_id", vendorId)
                 .maybeSingle();
 
+              if (vendorWalletError) throw new Error(`[Find Vendor Wallet Error]: ${vendorWalletError.message}`);
+
               if (!vendorWallet) {
-                const { data: newW } = await supabaseAdmin
+                const { data: newW, error: newVendorWalletError } = await supabaseAdmin
                   .from("user_wallets")
                   .insert({ user_id: vendorId, balance: 0.00 })
                   .select()
                   .single();
+                
+                if (newVendorWalletError) throw new Error(`[Create Vendor Wallet Error]: ${newVendorWalletError.message}`);
                 vendorWallet = newW;
               }
 
               const currentBal = Number(vendorWallet?.balance);
               
-              await supabaseAdmin
+              const { error: vWalletUpdateError } = await supabaseAdmin
                 .from("user_wallets")
                 .update({ balance: currentBal + vendorNetEarnings, updated_at: new Date().toISOString() })
                 .eq("id", vendorWallet?.id);
 
-              await supabaseAdmin
+              if (vWalletUpdateError) throw new Error(`[Update Vendor Balance Error]: ${vWalletUpdateError.message}`);
+
+              const { error: vTxInsertError } = await supabaseAdmin
                 .from("wallet_transactions")
                 .insert({
                   wallet_id: vendorWallet?.id,
@@ -151,57 +163,69 @@ export async function POST(request: Request) {
                   amount: vendorNetEarnings,
                   description: `Earnings from order #${order_id} ${commissionAmount > 0 ? '(Deducted by affiliate commission)' : ''}`,
                   payment_reference_id: order_id,
+                  order_id: orderData.id, 
                   status: "completed"
                 });
 
-              // 3. DISTRIBUSI KELUAR KE WALLET MAKELAR (AFFILIATE) JIKA VALID
-              if (affiliateData && commissionAmount > 0) {
-                // A. Catat riwayat ke affiliate_earnings
-                await supabaseAdmin.from("affiliate_earnings").insert({
-                  affiliate_id: affiliateData.id,
-                  order_id: orderData.id,
-                  buyer_id: orderData.buyer_id,
-                  commission_amount: commissionAmount,
-                  payout_status: "approved"
-                });
+              if (vTxInsertError) throw new Error(`[Insert Vendor Log Error]: ${vTxInsertError.message}`);
 
-                // B. Update counter total sales di tabel product_affiliates
-                const { data: currentAff } = await supabaseAdmin
+              if (affiliateData && commissionAmount > 0) {
+                const { error: affEarningError } = await supabaseAdmin
+                  .from("affiliate_earnings")
+                  .insert({
+                    affiliate_id: affiliateData.id,
+                    order_id: orderData.id, 
+                    buyer_id: orderData.buyer_id,
+                    commission_amount: commissionAmount,
+                    payout_status: "approved"
+                  });
+
+                if (affEarningError) throw new Error(`[Insert Affiliate Earnings Error]: ${affEarningError.message}`);
+
+                const { data: currentAff, error: currentAffError } = await supabaseAdmin
                   .from("product_affiliates")
                   .select("total_sales")
                   .eq("id", affiliateData.id)
                   .single();
 
-                await supabaseAdmin
+                if (currentAffError) throw new Error(`[Fetch Current Affiliate Total Sales Error]: ${currentAffError.message}`);
+
+                const { error: affSalesUpdateError } = await supabaseAdmin
                   .from("product_affiliates")
                   .update({ total_sales: (currentAff?.total_sales || 0) + 1 })
                   .eq("id", affiliateData.id);
 
-                // C. Kirim saldo masuk ke wallet milik si makelar
-                let { data: affWallet } = await supabaseAdmin
+                if (affSalesUpdateError) throw new Error(`[Update Affiliate Total Sales Error]: ${affSalesUpdateError.message}`);
+
+                let { data: affWallet, error: affWalletFindError } = await supabaseAdmin
                   .from("user_wallets")
                   .select("id, balance")
                   .eq("user_id", affiliateData.user_id)
                   .maybeSingle();
 
+                if (affWalletFindError) throw new Error(`[Find Affiliate Wallet Error]: ${affWalletFindError.message}`);
+
                 if (!affWallet) {
-                  const { data: newW } = await supabaseAdmin
+                  const { data: newW, error: newAffWalletError } = await supabaseAdmin
                     .from("user_wallets")
                     .insert({ user_id: affiliateData.user_id, balance: 0.00 })
                     .select()
                     .single();
+                  
+                  if (newAffWalletError) throw new Error(`[Create Affiliate Wallet Error]: ${newAffWalletError.message}`);
                   affWallet = newW;
                 }
 
                 const currentAffBal = Number(affWallet?.balance);
 
-                await supabaseAdmin
+                const { error: affBalanceUpdateError } = await supabaseAdmin
                   .from("user_wallets")
                   .update({ balance: currentAffBal + commissionAmount, updated_at: new Date().toISOString() })
                   .eq("id", affWallet?.id);
 
-                // D. Catat mutasi masuk tipe 'referral' di riwayat mutasi makelar
-                await supabaseAdmin
+                if (affBalanceUpdateError) throw new Error(`[Update Affiliate Balance Error]: ${affBalanceUpdateError.message}`);
+
+                const { error: affTxInsertError } = await supabaseAdmin
                   .from("wallet_transactions")
                   .insert({
                     wallet_id: affWallet?.id,
@@ -209,21 +233,25 @@ export async function POST(request: Request) {
                     amount: commissionAmount,
                     description: `Referral commission from product ${(item.products as any)?.title?.substring(0, 30)} (Order #${order_id})`,
                     payment_reference_id: order_id,
+                    order_id: orderData.id, 
                     status: "completed"
                   });
+
+                if (affTxInsertError) throw new Error(`[Insert Affiliate Log Error]: ${affTxInsertError.message}`);
               }
             }
           }
 
-          // Bersihkan isi keranjang belanja pembeli karena pembayaran Midtrans sudah settlement
-          await supabaseAdmin.from("carts").delete().eq("user_id", orderData.buyer_id);
+          const { error: cartDeleteError } = await supabaseAdmin.from("carts").delete().eq("user_id", orderData.buyer_id);
+          if (cartDeleteError) console.error("[Warning - Cart Delete Failed]:", cartDeleteError.message);
         }
       }
     }
 
     return NextResponse.json({ status: "OK" });
   } catch (error: any) {
-    console.error("Webhook Error:", error.message);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    console.error("🔴 WEBHOOK CRASHED:", error.message);
+    // Mengembalikan status 500 lengkap dengan pesan error spesifik agar tercatat di log Midtrans Dashboard lu
+    return NextResponse.json({ success: false, error: error.message }, { status: 500 });
   }
 }

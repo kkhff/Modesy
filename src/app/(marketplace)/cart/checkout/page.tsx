@@ -83,8 +83,9 @@ export default function CheckoutPage() {
   useEffect(() => {
     const fetchCheckoutData = async () => {
       try {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (!session?.user) {
+        // AMAN: Gunakan getUser() untuk data fetching inisiasi
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) {
           toast.error("Please login to continue checkout.");
           return;
         }
@@ -94,14 +95,14 @@ export default function CheckoutPage() {
         const { data: cartData } = await supabase
           .from("carts")
           .select("id, quantity, products(*, profiles(first_name, last_name))")
-          .eq("user_id", session.user.id);
+          .eq("user_id", user.id);
 
         if (cartData) setCartItems(cartData as any);
 
         const { data: walletData } = await supabase
           .from("user_wallets")
           .select("balance")
-          .eq("user_id", session.user.id)
+          .eq("user_id", user.id)
           .maybeSingle();
 
         if (walletData) {
@@ -267,7 +268,6 @@ export default function CheckoutPage() {
         return;
       }
 
-      // Cegat pake Swal biar ga takut ketekan salah pencet
       Swal.fire({
         title: "Confirm Wallet Payment?",
         text: `Your balance will be deducted by $${totals.total.toFixed(2)} USD to pay for this order.`,
@@ -283,27 +283,28 @@ export default function CheckoutPage() {
 
         const loadingToast = toast.loading("Processing wallet payment...");
         try {
-          const { data: { session } } = await supabase.auth.getSession();
-          if (!session?.user) throw new Error("Session expired. Please login again.");
+          // 🌟 AMAN: Gunakan getUser() real-time auth server call untuk proses finansial mutasi saldo
+          const { data: { user }, error: authError } = await supabase.auth.getUser();
+          if (authError || !user) throw new Error("Session expired. Please login again.");
 
           // 1. Potong Saldo Dompet Pembeli
           const newBalance = walletBalance - totals.total;
           const { error: walletError } = await supabase
             .from("user_wallets")
             .update({ balance: newBalance, updated_at: new Date().toISOString() })
-            .eq("user_id", session.user.id);
+            .eq("user_id", user.id);
 
           if (walletError) throw walletError;
 
           // 2. Buat Nomor Invoice Unik
-          const orderId = `INV-${Date.now()}-${Math.random().toString(36).substring(2, 5).toUpperCase()}`;
+          const orderInvoiceStr = `INV-${Date.now()}-${Math.random().toString(36).substring(2, 5).toUpperCase()}`;
 
-          // 3. Simpan Data Transaksi ke Tabel orders (Langsung 'processing')
+          // 3. Simpan Data Transaksi ke Tabel orders
           const { data: newOrder, error: orderError } = await supabase
             .from("orders")
             .insert({
-              invoice_number: orderId,
-              buyer_id: session.user.id,
+              invoice_number: orderInvoiceStr,
+              buyer_id: user.id,
               address_id: selectedAddressId,
               total_amount: Number(totals.total),
               shipping_cost: Number(totals.shippingCost),
@@ -332,7 +333,7 @@ export default function CheckoutPage() {
               shipping_fee_vendor: Number(vendorShipCost)
             });
 
-            // 🌟 HITUNG HAK CIPRATAN MAKELAR (AFFILIATE)
+            // HITUNG HAK CIPRATAN MAKELAR (AFFILIATE) BERDASARKAN RATE DINAMIS DATABASE
             let affiliateData = null;
             let commissionAmount = 0;
 
@@ -347,14 +348,11 @@ export default function CheckoutPage() {
                 
               if (aff) {
                 affiliateData = aff;
-
                 const productCommissionRate = Number(item.products.affiliate_commission_rate || 0);
-                // Flat komisi 10% dari harga dasar produk
                 commissionAmount = (finalPrice * item.quantity) * (productCommissionRate / 100); 
                }
             }
 
-            // Pendapatan bersih toko dikurangi komisi affiliate makelar
             const totalItemEarnings = (finalPrice * item.quantity) + Number(vendorShipCost);
             const vendorNetEarnings = totalItemEarnings - commissionAmount;
 
@@ -377,11 +375,14 @@ export default function CheckoutPage() {
                 .update({ balance: currentVendorBalance + vendorNetEarnings, updated_at: new Date().toISOString() })
                 .eq("id", targetVendorWalletId);
 
+              // 🌟 SEKARANG SUDAH AMAN: Menyetel payment_reference_id dan order_id untuk riwayat Vendor
               await supabase.from("wallet_transactions").insert({
                 wallet_id: targetVendorWalletId,
                 type: "earnings",
                 amount: vendorNetEarnings,
-                description: `Earnings from order #${orderId} ${commissionAmount > 0 ? '(Deducted by affiliate commission)' : ''}`,
+                description: `Earnings from order #${orderInvoiceStr} ${commissionAmount > 0 ? '(Deducted by affiliate commission)' : ''}`,
+                payment_reference_id: orderInvoiceStr,
+                order_id: newOrder.id,
                 status: "completed"
               });
             }
@@ -392,7 +393,7 @@ export default function CheckoutPage() {
               await supabase.from("affiliate_earnings").insert({
                 affiliate_id: affiliateData.id,
                 order_id: newOrder.id, 
-                buyer_id: session.user.id,
+                buyer_id: user.id,
                 commission_amount: commissionAmount,
                 payout_status: "approved"
               });
@@ -419,11 +420,15 @@ export default function CheckoutPage() {
 
               if (targetAffWalletId) {
                 await supabase.from("user_wallets").update({ balance: currentAffBalance + commissionAmount, updated_at: new Date().toISOString() }).eq("id", targetAffWalletId);
+                
+                // 🌟 SEKARANG SUDAH AMAN: Menyetel payment_reference_id dan order_id untuk riwayat Makelar Afiliasi
                 await supabase.from("wallet_transactions").insert({
                   wallet_id: targetAffWalletId,
                   type: "referral",
                   amount: commissionAmount,
-                  description: `Referral commission from product ${item.products.title.substring(0, 30)} (Order #${orderId})`,
+                  description: `Referral commission from product ${item.products.title.substring(0, 30)} (Order #${orderInvoiceStr})`,
+                  payment_reference_id: orderInvoiceStr,
+                  order_id: newOrder.id,
                   status: "completed"
                 });
               }
@@ -431,19 +436,22 @@ export default function CheckoutPage() {
           }
 
           // 5. Catat log keluar 'expenses' untuk Pembeli
-          const { data: buyerWalletInfo } = await supabase.from("user_wallets").select("id").eq("user_id", session.user.id).single();
+          const { data: buyerWalletInfo } = await supabase.from("user_wallets").select("id").eq("user_id", user.id).single();
           if (buyerWalletInfo) {
+            // 🌟 SEKARANG SUDAH AMAN: Menyetel payment_reference_id dan order_id untuk riwayat pengeluaran Pembeli
             await supabase.from("wallet_transactions").insert({
               wallet_id: buyerWalletInfo.id,
               type: "expenses",
               amount: totals.total,
-              description: `Purchased items using wallet balance (Invoice #${orderId})`,
+              description: `Purchased items using wallet balance (Invoice #${orderInvoiceStr})`,
+              payment_reference_id: orderInvoiceStr,
+              order_id: newOrder.id,
               status: "completed"
             });
           }
 
           // 6. Bersihkan Isi Keranjang Belanja Pembeli
-          await supabase.from("carts").delete().eq("user_id", session.user.id);
+          await supabase.from("carts").delete().eq("user_id", user.id);
 
           setWalletBalance(newBalance);
           setCartItems([]);
@@ -451,7 +459,7 @@ export default function CheckoutPage() {
           
           Swal.fire({
             title: "Purchase Successful!",
-            text: `Order #${orderId} has been successfully paid using your wallet balance.`,
+            text: `Order #${orderInvoiceStr} has been successfully paid using your wallet balance.`,
             icon: "success",
             confirmButtonColor: "#00a896",
             customClass: { popup: "rounded-sm text-sm font-sans" }
@@ -485,7 +493,8 @@ export default function CheckoutPage() {
               title: item.products.title,
               price: item.products.discounted_price !== null ? item.products.discounted_price : item.products.price,
               quantity: item.quantity,
-              vendor_id: item.products.user_id
+              vendor_id: item.products.user_id,
+              affiliate_commission_rate: item.products.affiliate_commission_rate
             }))
           })
         });
