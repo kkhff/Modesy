@@ -70,7 +70,6 @@ export default async function EarningsPage({
             <tr className="bg-slate-50 border-b border-gray-200 font-bold text-slate-700 h-10 select-none">
               <th className="px-4 py-2 w-28">Order</th>
               <th className="px-4 py-2">Total</th>
-              <th className="px-4 py-2">VAT</th>
               <th className="px-4 py-2 max-w-[220px]">Commissions & Discounts</th>
               <th className="px-4 py-2">Shipping Cost</th>
               <th className="px-4 py-2">Earned Amount</th>

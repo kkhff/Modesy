@@ -71,7 +71,6 @@ export default async function EditProductPage({ params }: PageProps) {
     price: productData.price || 0,
     discountRate: productData.discount_rate || 0,
     discountedPrice: productData.discounted_price !== undefined ? productData.discounted_price : 0,
-    vatRate: productData.vat_rate || 0,
     stock: productData.stock || 1,
     weight: productData.weight || 0,
     length: productData.length || 0,

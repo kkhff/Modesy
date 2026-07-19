@@ -110,7 +110,8 @@ export default function OrdersPage() {
             <div className="space-y-1">
               <div className="flex items-center gap-2">
                 <span className="text-slate-400">Order:</span>
-                <strong className="text-slate-800 font-semibold">#{order.invoice_number}</strong>
+                <Link 
+                href={`/orders/${order.id}`} className="text-slate-800 font-semibold">#{order.invoice_number}</Link>
               </div>
               <p className="text-[11px] text-slate-400 max-w-xs truncate">
                 {order.order_items.map(item => item.products?.title).join(", ")}

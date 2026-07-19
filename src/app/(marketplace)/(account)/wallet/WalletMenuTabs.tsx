@@ -24,12 +24,9 @@ export default function WalletMenuTabs({ isSeller }: { isSeller: boolean }) {
       <Link href="/wallet/expenses" className={`pb-3 px-3 border-b-2 transition-all ${isActive("/wallet/expenses") ? "border-[#00a896] text-[#00a896]" : "border-transparent hover:text-gray-800"}`}>
         Expenses
       </Link>
-      {isSeller && (
         <Link href="/wallet/payouts" className={`pb-3 px-3 border-b-2 transition-all ${isActive("/wallet/payouts") ? "border-[#00a896] text-[#00a896]" : "border-transparent hover:text-gray-800"}`}>
           Payouts
         </Link>
-      )}
-      {/* 🌟 SEMUA ROLE BISA AKSES MENU INI SEKARANG */}
       <Link href="/wallet/set-payout" className={`pb-3 px-3 border-b-2 transition-all ${isActive("/wallet/set-payout") ? "border-[#00a896] text-[#00a896]" : "border-transparent hover:text-gray-800"}`}>
         Set Payout Account
       </Link>

@@ -35,9 +35,7 @@ export default function StepTwo({ data, updateData, onBack, onSubmit }: StepTwoP
   // --- STATE LOKAL HARGA ---
   const [price, setPrice] = useState<number>(Number(data.price) || 0);
   const [discountedPrice, setDiscountedPrice] = useState<number>(Number(data.discountedPrice) || 0);
-  const [vatRate, setVatRate] = useState<number>(Number(data.vatRate) || 0);
   const [noDiscount, setNoDiscount] = useState<boolean>(false);
-  const [noVat, setNoVat] = useState<boolean>(false);
 
   // 🌟 STATE BARU: AFFILIATE CONTROLLER
   const [isAffiliate, setIsAffiliate] = useState<boolean>(!!data.is_affiliate);
@@ -226,14 +224,13 @@ export default function StepTwo({ data, updateData, onBack, onSubmit }: StepTwoP
       price,
       discountedPrice: noDiscount ? price : discountedPrice, 
       discountRate: noDiscount ? 0 : (rate < 0 ? 0 : rate),
-      vatRate: noVat ? 0 : vatRate,
       variations: mappedVariants,
       
       // 🌟 Masukkan data kuncian objek baru untuk dikirim ke tabel Supabase
       is_affiliate: isAffiliate,
       affiliate_commission_rate: isAffiliate ? affiliateRate : null
     }));
-  }, [price, discountedPrice, vatRate, noDiscount, noVat, defaultVariantId, variants, isAffiliate, affiliateRate]);
+  }, [price, discountedPrice,  noDiscount,  defaultVariantId, variants, isAffiliate, affiliateRate]);
 
   // API FETCH GEOGRAFI
   useEffect(() => {
@@ -456,16 +453,7 @@ export default function StepTwo({ data, updateData, onBack, onSubmit }: StepTwoP
             </label>
           </div>
 
-          <div>
-            <label className="block text-xs font-semibold text-slate-700 mb-2">Product Based VAT (%)</label>
-            <div className="flex shadow-2xs rounded-sm">
-              <span className="bg-slate-100 border border-r-0 border-slate-200 px-3 text-slate-500 text-xs flex items-center">%</span>
-              <input type="number" value={noVat ? 0 : vatRate || ""} disabled={noVat} onChange={(e) => setVatRate(Number(e.target.value))} className="w-full border border-slate-200 h-10 px-3 text-xs focus:outline-none focus:border-[#00a896] disabled:bg-slate-100" />
-            </div>
-            <label className="flex items-center gap-2 mt-3 text-xs text-slate-600 font-semibold cursor-pointer select-none">
-              <input type="checkbox" checked={noVat} onChange={(e) => setNoVat(e.target.checked)} className="w-4 h-4 accent-[#00a896]" /> No VAT
-            </label>
-          </div>
+          
         </div>
 
         {/* 🌟 BARIS BARU: INTERFASE DROPDOWN DAN RATE AFILIASI DENGAN VALIDASI MIN 5% */}
@@ -534,7 +522,7 @@ export default function StepTwo({ data, updateData, onBack, onSubmit }: StepTwoP
                   ? (netEarnings - (targetPrice * (affiliateRate < 5 ? 5 : affiliateRate)) / 100).toFixed(2) 
                   : "0.00"
                 : netEarnings > 0 ? netEarnings.toFixed(2) : "0.00"
-              } + VAT
+              } 
             </span>
           </div>
         </div>

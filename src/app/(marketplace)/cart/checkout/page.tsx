@@ -36,6 +36,7 @@ interface CartItem {
 export default function CheckoutPage() {
   const [activeStep, setActiveStep] = useState<1 | 2 | 3>(1);
   const [loading, setLoading] = useState(true);
+  const [vatRate, setVatRate] = useState<number>(0);
   
   // Data State
   const [cartItems, setCartItems] = useState<CartItem[]>([]);
@@ -48,7 +49,6 @@ export default function CheckoutPage() {
 
   // Selection Checkout State
   const [selectedAddressId, setSelectedAddressId] = useState<string>("");
-  const [useSameForBilling, setUseSameForBilling] = useState(true);
   const [selectedShippingMethods, setSelectedShippingMethods] = useState<Record<string, { name: string; cost: number }>>({});
   const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<string>("midtrans");
   const [agreeTerms, setAgreeTerms] = useState(false);
@@ -79,11 +79,10 @@ export default function CheckoutPage() {
     }
   };
 
-  // 2. Fetch Awal Data Paralel (Cart, Address, Wallet Balance)
+  // 2. Fetch Awal Data Paralel (Cart, Address, Wallet Balance, Global VAT)
   useEffect(() => {
     const fetchCheckoutData = async () => {
       try {
-        // AMAN: Gunakan getUser() untuk data fetching inisiasi
         const { data: { user } } = await supabase.auth.getUser();
         if (!user) {
           toast.error("Please login to continue checkout.");
@@ -91,6 +90,16 @@ export default function CheckoutPage() {
         }
 
         await fetchAddresses();
+
+        // Tarik data konfigurasi dari tabel vat_settings admin
+        const { data: vatData } = await supabase
+          .from("vat_settings")
+          .select("vat_rate")
+          .maybeSingle();
+
+        if (vatData) {
+          setVatRate(Number(vatData.vat_rate) || 0);
+        }
 
         const { data: cartData } = await supabase
           .from("carts")
@@ -232,19 +241,34 @@ export default function CheckoutPage() {
     setSelectedShippingMethods(defaults);
   }, [activeAddress, vendorGroups]);
 
+  // AKUMULASI PERHITUNGAN VAT PAJAK SECARA PRESISI PER ITEM PRODUK
   const totals = useMemo(() => {
     let subtotal = 0;
+    let totalVatAmount = 0;
+
     cartItems.forEach((item) => {
       const p = item.products;
       const finalPrice = p.discounted_price !== null ? Number(p.discounted_price) : Number(p.price);
+      
       subtotal += finalPrice * item.quantity;
+      
+      // Rumus hitung VAT per satuan unit, lalu dikalikan kuantitas barang
+      const unitVat = finalPrice * (vatRate / 100);
+      totalVatAmount += unitVat * item.quantity;
     });
+
     let shippingCost = 0;
     Object.values(selectedShippingMethods).forEach((ship) => {
       shippingCost += ship.cost;
     });
-    return { subtotal, shippingCost, total: subtotal + shippingCost };
-  }, [cartItems, selectedShippingMethods]);
+
+    return { 
+      subtotal, 
+      shippingCost, 
+      vatAmount: totalVatAmount,
+      total: subtotal + shippingCost + totalVatAmount 
+    };
+  }, [cartItems, selectedShippingMethods, vatRate]);
 
   // =========================================================================
   // EKSEKUSI PLACE ORDER (INTEGRASI MIDTRANS SNAP / DEDUKSI USER WALLET)
@@ -261,7 +285,7 @@ export default function CheckoutPage() {
 
     const affiliateCode = getCookie("modesy_affiliate_ref");
 
-    // 🅰️ METODE PEMBAYARAN: WALLET BALANCE
+    // 🅰️ METODE PEMBAYARAN: WALLET BALANCE INTERNAL
     if (selectedPaymentMethod === "wallet") {
       if (walletBalance < totals.total) {
         toast.error("Your wallet balance is insufficient.");
@@ -283,7 +307,6 @@ export default function CheckoutPage() {
 
         const loadingToast = toast.loading("Processing wallet payment...");
         try {
-          // 🌟 AMAN: Gunakan getUser() real-time auth server call untuk proses finansial mutasi saldo
           const { data: { user }, error: authError } = await supabase.auth.getUser();
           if (authError || !user) throw new Error("Session expired. Please login again.");
 
@@ -299,7 +322,7 @@ export default function CheckoutPage() {
           // 2. Buat Nomor Invoice Unik
           const orderInvoiceStr = `INV-${Date.now()}-${Math.random().toString(36).substring(2, 5).toUpperCase()}`;
 
-          // 3. Simpan Data Transaksi ke Tabel orders
+          // 3. Simpan Data Transaksi Utama ke Tabel orders
           const { data: newOrder, error: orderError } = await supabase
             .from("orders")
             .insert({
@@ -317,23 +340,29 @@ export default function CheckoutPage() {
 
           if (orderError || !newOrder) throw orderError || new Error("Failed to create order record.");
 
-          // 4. Loop Items untuk Vendor Earnings & Cabang Distribusi Komisi Makelar
+          // 4. Loop Items untuk Vendor Earnings & Menyisipkan Pajak VAT Per Item ke order_items
           for (const item of cartItems) {
             const finalPrice = item.products.discounted_price !== null ? Number(item.products.discounted_price) : Number(item.products.price);
             const vendorId = item.products.user_id;
             const vendorShipCost = selectedShippingMethods[vendorId]?.cost || 0;
             
-            // Masukkan record barang terjual ke order_items
+            // 🌟 HITUNG TOTAL HARGA DAN TOTAL VAT SESUAI QUANTITY
+            const calculatedTotalPrice = finalPrice * item.quantity;
+            const calculatedTotalVatPrice = calculatedTotalPrice * (vatRate / 100);
+
             await supabase.from("order_items").insert({
               order_id: newOrder.id,
               product_id: item.products.id,
               vendor_id: vendorId,
               quantity: item.quantity,
-              price: finalPrice,
-              shipping_fee_vendor: Number(vendorShipCost)
+              price: finalPrice,                     // Tetap harga original per unit
+              total_price: Number(calculatedTotalPrice), // 🌟 Kolom baru hasil kali quantity
+              shipping_fee_vendor: Number(vendorShipCost),
+              vat_rate: Number(vatRate),
+              vat_price: Number(calculatedTotalVatPrice) // 🌟 Sekarang menyimpan nominal total VAT dari total_price
             });
 
-            // HITUNG HAK CIPRATAN MAKELAR (AFFILIATE) BERDASARKAN RATE DINAMIS DATABASE
+            // HITUNG HAK CIPRATAN MAKELAR (AFFILIATE)
             let affiliateData = null;
             let commissionAmount = 0;
 
@@ -375,7 +404,6 @@ export default function CheckoutPage() {
                 .update({ balance: currentVendorBalance + vendorNetEarnings, updated_at: new Date().toISOString() })
                 .eq("id", targetVendorWalletId);
 
-              // 🌟 SEKARANG SUDAH AMAN: Menyetel payment_reference_id dan order_id untuk riwayat Vendor
               await supabase.from("wallet_transactions").insert({
                 wallet_id: targetVendorWalletId,
                 type: "earnings",
@@ -389,7 +417,6 @@ export default function CheckoutPage() {
 
             // B. Kirim Uang Ke Wallet Makelar Afiliasi (Jika Valid)
             if (affiliateData && commissionAmount > 0) {
-              // Catat log internal affiliate_earnings
               await supabase.from("affiliate_earnings").insert({
                 affiliate_id: affiliateData.id,
                 order_id: newOrder.id, 
@@ -398,14 +425,12 @@ export default function CheckoutPage() {
                 payout_status: "approved"
               });
 
-              // Naikkan counter total sales promotor
               const { data: currentAffRecord } = await supabase.from("product_affiliates").select("total_sales").eq("id", affiliateData.id).single();
               await supabase
                 .from("product_affiliates")
                 .update({ total_sales: (currentAffRecord?.total_sales || 0) + 1 })
                 .eq("id", affiliateData.id);
 
-              // Masukkan duit ke balance makelar
               const { data: affWallet } = await supabase.from("user_wallets").select("id, balance").eq("user_id", affiliateData.user_id).maybeSingle();
               let targetAffWalletId = affWallet?.id;
               let currentAffBalance = affWallet ? Number(affWallet.balance) : 0;
@@ -421,7 +446,6 @@ export default function CheckoutPage() {
               if (targetAffWalletId) {
                 await supabase.from("user_wallets").update({ balance: currentAffBalance + commissionAmount, updated_at: new Date().toISOString() }).eq("id", targetAffWalletId);
                 
-                // 🌟 SEKARANG SUDAH AMAN: Menyetel payment_reference_id dan order_id untuk riwayat Makelar Afiliasi
                 await supabase.from("wallet_transactions").insert({
                   wallet_id: targetAffWalletId,
                   type: "referral",
@@ -438,7 +462,6 @@ export default function CheckoutPage() {
           // 5. Catat log keluar 'expenses' untuk Pembeli
           const { data: buyerWalletInfo } = await supabase.from("user_wallets").select("id").eq("user_id", user.id).single();
           if (buyerWalletInfo) {
-            // 🌟 SEKARANG SUDAH AMAN: Menyetel payment_reference_id dan order_id untuk riwayat pengeluaran Pembeli
             await supabase.from("wallet_transactions").insert({
               wallet_id: buyerWalletInfo.id,
               type: "expenses",
@@ -475,10 +498,12 @@ export default function CheckoutPage() {
       });
     } 
     
-    // 🅱️ METODE PEMBAYARAN: SECURE MIDTRANS SNAP
+    // 🅱️ METODE PEMBAYARAN: SECURE MIDTRANS GATEWAY
     else if (selectedPaymentMethod === "midtrans") {
       const loadingToast = toast.loading("Connecting to Midtrans gateway...");
       try {
+        // Pada webhook backend API Midtrans lu, pastikan lu tarik juga data vat_settings 
+        // saat insert data pasca status payment 'settlement' agar sinkron.
         const res = await fetch("/api/checkout/midtrans", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -488,6 +513,7 @@ export default function CheckoutPage() {
             shippingMethods: selectedShippingMethods,
             addressId: selectedAddressId,
             affiliateCode: affiliateCode, 
+            vatRate: vatRate, // Oper nilai vatRate aktif ke backend Midtrans API handler
             items: cartItems.map(item => ({
               id: item.products.id,
               title: item.products.title,
@@ -755,9 +781,25 @@ export default function CheckoutPage() {
           </div>
 
           <div className="border-t border-gray-100 pt-4 space-y-2.5 font-medium text-slate-700">
-            <div className="flex justify-between"><span className="text-slate-400">Subtotal</span><span className="font-bold">${totals.subtotal.toFixed(2)}</span></div>
-            <div className="flex justify-between"><span className="text-slate-400">Shipping</span><span className="font-bold text-emerald-600">${totals.shippingCost.toFixed(2)}</span></div>
-            <div className="flex justify-between text-sm font-bold border-t border-gray-100 pt-3 text-slate-900"><span>Total</span><span className="text-[#00a896] text-base font-extrabold">${totals.total.toFixed(2)}</span></div>
+            <div className="flex justify-between">
+              <span className="text-slate-400">Subtotal</span>
+              <span className="font-bold">${totals.subtotal.toFixed(2)}</span>
+            </div>
+            
+            <div className="flex justify-between">
+              <span className="text-slate-400">VAT ({vatRate}%)</span>
+              <span className="font-bold text-slate-700">${totals.vatAmount.toFixed(2)}</span>
+            </div>
+
+            <div className="flex justify-between">
+              <span className="text-slate-400">Shipping</span>
+              <span className="font-bold text-emerald-600">${totals.shippingCost.toFixed(2)}</span>
+            </div>
+
+            <div className="flex justify-between text-sm font-bold border-t border-gray-100 pt-3 text-slate-900">
+              <span>Total</span>
+              <span className="text-[#00a896] text-base font-extrabold">${totals.total.toFixed(2)}</span>
+            </div>
           </div>
         </div>
 

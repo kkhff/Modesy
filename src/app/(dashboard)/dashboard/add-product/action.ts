@@ -59,7 +59,6 @@ export async function createProductAction(formData: FormData) {
     const price = formData.get("price") ? Number(formData.get("price")) : 0;
     const discountRate = formData.get("discountRate") ? Number(formData.get("discountRate")) : 0;
     const discountedPrice = formData.get("discountedPrice") ? Number(formData.get("discountedPrice")) : null;
-    const vatRate = formData.get("vatRate") ? Number(formData.get("vatRate")) : 0;
     const stock = formData.get("stock") ? Number(formData.get("stock")) : 1;
 
     // Data Logistik & Pengiriman baru
@@ -150,7 +149,6 @@ export async function createProductAction(formData: FormData) {
           variation_options: variationOptions,
           discount_rate: discountRate,
           discounted_price: discountedPrice,
-          vat_rate: vatRate,
           stock: stock,
           weight: weight,
           length: length,
