@@ -154,7 +154,7 @@ export default function VendorRefundDetailPage({ params }: { params: Promise<{ i
           <span className={`px-2 py-0.5 rounded-xs font-bold uppercase text-[9px] ${ticket.status === 'approved' ? 'bg-emerald-50 text-emerald-600' : ticket.status === 'rejected' ? 'bg-rose-50 text-rose-600' : 'bg-slate-100 text-slate-600'}`}>{ticket.status}</span>
         </div>
         <div><span className="text-slate-400 block mb-0.5">Total</span><span className="font-bold text-slate-800">${Number(item?.total_price || 0).toFixed(2)}</span></div>
-        <div><span className="text-slate-400 block mb-0.5">Buyer</span><span className="font-bold text-sky-600">{buyerFullName}</span></div>
+        <div><span className="text-slate-400 block mb-0.5">Buyer</span><span className="font-bold text-slate-600">{buyerFullName}</span></div>
         <div><span className="text-slate-400 block mb-0.5">Last Update</span><span className="text-slate-500 font-semibold">{formatDistanceToNow(new Date(ticket.created_at))} ago</span></div>
         <div><span className="text-slate-400 block mb-0.5">Date</span><span className="text-slate-500 font-semibold">{new Date(ticket.created_at).toISOString().split('T')[0]}</span></div>
       </div>

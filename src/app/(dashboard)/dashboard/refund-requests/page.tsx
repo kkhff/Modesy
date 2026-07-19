@@ -20,18 +20,21 @@ export default function VendorRefundRequestsPage() {
 
         // 🌟 Kueri filter menggunakan !inner join untuk mengunci vendor_id milik user login
         const { data, error } = await supabase
-          .from("refund_requests")
-          .select(`
-            id, status, created_at,
-            buyer:profiles!refund_requests_user_id_fkey(first_name, last_name),
-            order_items!inner(
-              total_price,
-              vendor_id,
-              products(title)
-            )
-          `)
-          .eq("order_items.vendor_id", authData.user.id)
-          .order("created_at", { ascending: false });
+  .from("refund_requests")
+  .select(`
+    id, 
+    status, 
+    created_at,
+    user_id,
+    buyer:profiles(first_name, last_name),
+    order_items!inner(
+      total_price,
+      vendor_id,
+      products(title)
+    )
+  `)
+  .eq("order_items.vendor_id", authData.user.id)
+  .order("created_at", { ascending: false });
 
         if (error) throw error;
         setRequests(data || []);
@@ -78,11 +81,11 @@ export default function VendorRefundRequestsPage() {
 
               return (
                 <tr key={req.id} className="hover:bg-slate-50/50 h-11">
-                  <td className="py-2 text-sky-600 font-bold max-w-xs truncate">
+                  <td className="py-2 text-slate-600 font-bold max-w-xs truncate">
                     #{req.id} - {item?.products?.title}
                   </td>
                   <td className="py-2 font-bold text-slate-800">${Number(item?.total_price || 0).toFixed(2)}</td>
-                  <td className="py-2 text-sky-600 font-bold">{buyerName}</td>
+                  <td className="py-2 text-slate-600 font-bold">{buyerName}</td>
                   <td className="py-2">
                     <span className={`px-2 py-0.5 rounded-xs text-[9px] font-bold uppercase ${
                       req.status === 'approved' ? 'bg-emerald-50 text-emerald-600 border border-emerald-100' :
@@ -95,7 +98,7 @@ export default function VendorRefundRequestsPage() {
                   </td>
                   <td className="py-2 text-right">
                     <Link href={`/dashboard/refund-requests/${req.id}`} className="h-7 px-3 bg-[#f4f5f7] border border-gray-200 hover:bg-slate-200 text-slate-700 font-bold rounded-xs inline-flex items-center gap-1">
-                      ℹ️ Details
+                      Details
                     </Link>
                   </td>
                 </tr>

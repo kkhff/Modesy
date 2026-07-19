@@ -120,7 +120,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           icon: ShoppingCart, 
           hasSub: true,
           subItems: [
-            { name: "Orders", href: "/dashboard/sales/orders" },
+            { name: "Active Sales", href: "/dashboard/sales/active" },
             { name: "Invoices", href: "/dashboard/sales/invoices" }
           ]
         },

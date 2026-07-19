@@ -243,7 +243,7 @@ export default function Header() {
                     <DropdownMenuItem className="text-gray-600 focus:bg-gray-50 cursor-pointer rounded-xs" onClick={() => router.push("/panel")}>
                       <Layers className="w-4 h-4 mr-2" /> Admin Panel 
                     </DropdownMenuItem>
-                    <DropdownMenuItem className="text-gray-600 focus:bg-gray-50 cursor-pointer rounded-xs" onClick={() => router.push("/admin")}>
+                    <DropdownMenuItem className="text-gray-600 focus:bg-gray-50 cursor-pointer rounded-xs" onClick={() => router.push("/dashboard")}>
                       <LayoutDashboard className="w-4 h-4 mr-2" /> Dashboard 
                     </DropdownMenuItem>
                     {/* 🌟 FIX AMAN: Menggunakan fungsi handleProfileNavigation agar anti-undefined */}
@@ -387,8 +387,15 @@ export default function Header() {
             <Button 
               className="bg-[#00a896] hover:bg-[#009282] text-white rounded-sm h-10 px-5 text-xs font-semibold shadow-xs cursor-pointer"
               onClick={() => {
-                if (!user) setIsLoginOpen(true);
-                else router.push("/sell");
+                if (!user) {
+                  setIsLoginOpen(true);
+                } else if (profile?.role === "vendor" || profile?.role === "admin") {
+                  // Vendor dan admin langsung diarahkan ke halaman tambah produk
+                  router.push("/dashboard/add-product");
+                } else {
+                  // Member dan moderator diarahkan ke halaman start-selling untuk proses validasi lanjutan
+                  router.push("/start-selling");
+                }
               }}
             >
               Sell Now
