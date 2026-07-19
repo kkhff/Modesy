@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, Suspense } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Plus, Ticket, Layers, Trash2, Edit, Loader2, ChevronLeft, ChevronRight } from "lucide-react";
@@ -9,7 +9,8 @@ import Swal from "sweetalert2";
 import { createClient } from "@/lib/supabase/client";
 import { deleteCouponAction } from "./action";
 
-export default function VendorCouponsPage() {
+// 🌟 Bagian 1: Komponen Utama yang Berisi Logic & State
+function VendorCouponsContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const supabase = createClient();
@@ -217,7 +218,6 @@ export default function VendorCouponsPage() {
                             <Edit className="w-3.5 h-3.5" />
                           </Link>
                           
-                          {/* 🌟 ACTION DELETE INTEGRATED DIRECTLY HERE */}
                           <button 
                             type="button" 
                             disabled={deletingId === row.id}
@@ -282,5 +282,18 @@ export default function VendorCouponsPage() {
       )}
 
     </div>
+  );
+}
+
+// 🌟 Bagian 2: Default Export yang Membungkus Konten Utama dengan Suspense Bawaan React
+export default function VendorCouponsPage() {
+  return (
+    <Suspense fallback={
+      <div className="w-full text-center py-24 font-sans text-xs text-slate-400 flex flex-col items-center justify-center gap-2">
+        <Loader2 className="w-5 h-5 animate-spin text-[#00a896]" /> Loading coupons repository...
+      </div>
+    }>
+      <VendorCouponsContent />
+    </Suspense>
   );
 }
